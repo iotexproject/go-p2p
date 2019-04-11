@@ -13,6 +13,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p"
 	relay "github.com/libp2p/go-libp2p-circuit"
+	connmgr "github.com/libp2p/go-libp2p-connmgr"
 	crypto "github.com/libp2p/go-libp2p-crypto"
 	host "github.com/libp2p/go-libp2p-host"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -46,6 +47,9 @@ type Config struct {
 	ConnectTimeout   time.Duration
 	MasterKey        string
 	Relay            string // could be `active`, `nat`, `disable`
+	ConnLowWater     int
+	ConnHighWater    int
+	ConnGracePeriod  time.Duration
 }
 
 // DefaultConfig is a set of default configs
@@ -59,6 +63,9 @@ var DefaultConfig = Config{
 	ConnectTimeout:   time.Minute,
 	MasterKey:        "",
 	Relay:            "disable",
+	ConnLowWater:     200,
+	ConnHighWater:    500,
+	ConnGracePeriod:  0,
 }
 
 // Option defines the option function to modify the config for a host
@@ -136,6 +143,16 @@ func WithRelay(relayType string) Option {
 	}
 }
 
+// WithConnectionManagerConfig set configuration for connection manager.
+func WithConnectionManagerConfig(lo, hi int, grace time.Duration) Option {
+	return func(cfg *Config) error {
+		cfg.ConnLowWater = lo
+		cfg.ConnHighWater = hi
+		cfg.ConnGracePeriod = grace
+		return nil
+	}
+}
+
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
 	host      host.Host
@@ -205,6 +222,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 			return &tcp.TcpTransport{Upgrader: upgrader, ConnectTimeout: cfg.ConnectTimeout}
 		}),
 		libp2p.Muxer("/yamux/2.0.0", sm_yamux.DefaultTransport),
+		libp2p.ConnectionManager(connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)),
 	}
 	if !cfg.SecureIO {
 		opts = append(opts, libp2p.NoSecurity)
