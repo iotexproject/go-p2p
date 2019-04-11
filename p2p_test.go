@@ -37,7 +37,7 @@ func TestBroadcast(t *testing.T) {
 			if i != 0 {
 				require.NoError(t, hosts[i].Connect(ctx, bootstrapInfo))
 			}
-			require.NoError(t, hosts[i].JoinOverlay(ctx))
+			hosts[i].JoinOverlay(ctx)
 		}
 
 		for i := 0; i < n; i++ {
@@ -81,7 +81,7 @@ func TestUnicast(t *testing.T) {
 		if i != 0 {
 			require.NoError(t, hosts[i].Connect(ctx, bootstrapInfo))
 		}
-		require.NoError(t, hosts[i].JoinOverlay(ctx))
+		hosts[i].JoinOverlay(ctx)
 	}
 
 	for i, host := range hosts {

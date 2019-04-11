@@ -966,6 +966,7 @@
     "github.com/libp2p/go-libp2p-circuit",
     "github.com/libp2p/go-libp2p-connmgr",
     "github.com/libp2p/go-libp2p-crypto",
+    "github.com/libp2p/go-libp2p-discovery",
     "github.com/libp2p/go-libp2p-host",
     "github.com/libp2p/go-libp2p-kad-dht",
     "github.com/libp2p/go-libp2p-net",

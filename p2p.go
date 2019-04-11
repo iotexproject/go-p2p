@@ -15,6 +15,7 @@ import (
 	relay "github.com/libp2p/go-libp2p-circuit"
 	connmgr "github.com/libp2p/go-libp2p-connmgr"
 	crypto "github.com/libp2p/go-libp2p-crypto"
+	discovery "github.com/libp2p/go-libp2p-discovery"
 	host "github.com/libp2p/go-libp2p-host"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	net "github.com/libp2p/go-libp2p-net"
@@ -243,6 +244,8 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	}
 	kad, err := dht.New(ctx, host)
 	if err != nil {
+	}
+	if err := kad.Bootstrap(ctx); err != nil {
 		return nil, err
 	}
 	newPubSub := pubsub.NewFloodSub
@@ -266,6 +269,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		close:     make(chan interface{}),
 		ctx:       ctx,
 	}
+
 	addrs := make([]string, 0)
 	for _, ma := range myHost.Addresses() {
 		addrs = append(addrs, ma.String())
@@ -278,11 +282,9 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 }
 
 // JoinOverlay triggers the host to join the DHT overlay
-func (h *Host) JoinOverlay(ctx context.Context) error {
-	if err := h.kad.Provide(ctx, h.kadKey, true); err == nil {
-		return nil
-	}
-	return h.kad.Bootstrap(ctx)
+func (h *Host) JoinOverlay(ctx context.Context) {
+	routingDiscovery := discovery.NewRoutingDiscovery(h.kad)
+	discovery.Advertise(ctx, routingDiscovery, h.kadKey.String())
 }
 
 // AddUnicastPubSub adds a unicast topic that the host will pay attention to
