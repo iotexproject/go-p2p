@@ -44,31 +44,31 @@ type HandleUnicast func(ctx context.Context, w io.Writer, data []byte) error
 
 // Config enumerates the configs required by a host
 type Config struct {
-	HostName                 string
-	Port                     int
-	ExternalHostName         string
-	ExternalPort             int
-	SecureIO                 bool
-	Gossip                   bool
-	ConnectTimeout           time.Duration
-	MasterKey                string
-	Relay                    string // could be `active`, `nat`, `disable`
-	ConnLowWater             int
-	ConnHighWater            int
-	RateLimiterLRUSize       int
-	BlackListLRUSize         int
-	BlackListCleanupInterval time.Duration
-	ConnGracePeriod          time.Duration
-	EnableRateLimit          bool
-	RateLimit                RateLimitConfig
+	HostName                 string          `yaml:"hostName"`
+	Port                     int             `yaml:"port"`
+	ExternalHostName         string          `yaml:"externalHostName"`
+	ExternalPort             int             `yaml:"externalPort"`
+	SecureIO                 bool            `yaml:"secureIO"`
+	Gossip                   bool            `yaml:"gossip"`
+	ConnectTimeout           time.Duration   `yaml:"connectTimeout"`
+	MasterKey                string          `yaml:"masterKey"`
+	Relay                    string          `yaml:"relay"` // could be `active`, `nat`, `disable`
+	ConnLowWater             int             `yaml:"connLowWater"`
+	ConnHighWater            int             `yaml:"connHighWater"`
+	RateLimiterLRUSize       int             `yaml:"rateLimiterLRUSize"`
+	BlackListLRUSize         int             `yaml:"blackListLRUSize"`
+	BlackListCleanupInterval time.Duration   `yaml:"blackListCleanupInterval"`
+	ConnGracePeriod          time.Duration   `yaml:"connGracePeriod"`
+	EnableRateLimit          bool            `yaml:"enableRateLimit"`
+	RateLimit                RateLimitConfig `yaml:"rateLimit"`
 }
 
 // RateLimitConfig all numbers are per second value.
 type RateLimitConfig struct {
-	GlobalUnicastAvg   int
-	GlobalUnicastBurst int
-	PeerAvg            int
-	PeerBurst          int
+	GlobalUnicastAvg   int `yaml:"globalUnicastAvg"`
+	GlobalUnicastBurst int `yaml:"globalUnicastBurst"`
+	PeerAvg            int `yaml:"peerAvg"`
+	PeerBurst          int `yaml:"peerBurst"`
 }
 
 // DefaultConfig is a set of default configs
@@ -415,7 +415,7 @@ func (h *Host) AddBroadcastPubSub(topic string, callback HandleBroadcast) error 
 					continue
 				}
 				src := msg.GetFrom()
-				allowed, err := h.allowBroadcastSource(src)
+				allowed, err := h.allowSource(src)
 				if err != nil {
 					Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
 					continue
@@ -549,7 +549,7 @@ func (h *Host) Close() error {
 	return nil
 }
 
-func (h *Host) allowBroadcastSource(src peer.ID) (bool, error) {
+func (h *Host) allowSource(src peer.ID) (bool, error) {
 	if !h.cfg.EnableRateLimit {
 		return true, nil
 	}
