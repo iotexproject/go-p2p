@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -26,6 +27,7 @@ import (
 	net "github.com/libp2p/go-libp2p-net"
 	peer "github.com/libp2p/go-libp2p-peer"
 	peerstore "github.com/libp2p/go-libp2p-peerstore"
+	pnet "github.com/libp2p/go-libp2p-pnet"
 	protocol "github.com/libp2p/go-libp2p-protocol"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	stream "github.com/libp2p/go-libp2p-transport-upgrader"
@@ -65,6 +67,7 @@ type Config struct {
 	ConnGracePeriod          time.Duration   `yaml:"connGracePeriod"`
 	EnableRateLimit          bool            `yaml:"enableRateLimit"`
 	RateLimit                RateLimitConfig `yaml:"rateLimit"`
+	PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
 }
 
 // RateLimitConfig all numbers are per second value.
@@ -97,6 +100,7 @@ var DefaultConfig = Config{
 	ConnGracePeriod:          0,
 	EnableRateLimit:          false,
 	RateLimit:                DefaultRatelimitConfig,
+	PrivateNetworkPSK:        "",
 }
 
 // DefaultRatelimitConfig is the default rate limit config
@@ -201,6 +205,14 @@ func WithConnectionManagerConfig(lo, hi int, grace time.Duration) Option {
 	}
 }
 
+// PrivateNetworkPSK is to determine network identifier
+func PrivateNetworkPSK(privateNetworkPSK string) Option {
+	return func(cfg *Config) error {
+		cfg.PrivateNetworkPSK = privateNetworkPSK
+		return nil
+	}
+}
+
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
 	host           host.Host
@@ -286,6 +298,16 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		opts = append(opts, libp2p.EnableRelay(), libp2p.NATPortMap())
 	} else {
 		opts = append(opts, libp2p.DisableRelay())
+	}
+
+	// private p2p network
+	if cfg.PrivateNetworkPSK != "" {
+		reader := strings.NewReader(cfg.PrivateNetworkPSK)
+		p, err := pnet.NewProtector(reader)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, libp2p.PrivateNetwork(p))
 	}
 
 	host, err := libp2p.New(ctx, opts...)
