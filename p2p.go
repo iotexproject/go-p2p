@@ -8,7 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/pkg/errors"
@@ -302,8 +302,11 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 
 	// private p2p network
 	if cfg.PrivateNetworkPSK != "" {
-		reader := strings.NewReader(cfg.PrivateNetworkPSK)
-		p, err := pnet.NewProtector(reader)
+		f, err := os.Open(cfg.PrivateNetworkPSK)
+		if err != nil {
+			return nil, err
+		}
+		p, err := pnet.NewProtector(f)
 		if err != nil {
 			return nil, err
 		}
