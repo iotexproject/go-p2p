@@ -3,7 +3,7 @@ package p2p
 import (
 	"context"
 
-	"github.com/libp2p/go-libp2p-net"
+	"github.com/libp2p/go-libp2p-core"
 	"github.com/libp2p/go-libp2p-pubsub"
 )
 
@@ -12,8 +12,8 @@ type broadcastCtxKey struct{}
 type unicastCtxKey struct{}
 
 // GetUnicastStream retrieves net.Stream from unicast request context.
-func GetUnicastStream(ctx context.Context) (net.Stream, bool) {
-	s, ok := ctx.Value(unicastCtxKey{}).(net.Stream)
+func GetUnicastStream(ctx context.Context) (core.Stream, bool) {
+	s, ok := ctx.Value(unicastCtxKey{}).(core.Stream)
 	return s, ok
 }
 
