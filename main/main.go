@@ -145,19 +145,16 @@ func main() {
 		host.JoinOverlay(context.Background())
 	}
 
+	ctx := context.Background()
 	tick := time.Tick(time.Duration(frequency) * time.Millisecond)
 	for {
 		select {
 		case <-tick:
 			var err error
 			if broadcast {
-				err = host.Broadcast("measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
+				err = host.Broadcast(ctx, "measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
 			} else {
-				neighbors, err := host.Neighbors(context.Background())
-				if err != nil {
-					p2p.Logger().Error("Error when getting neighbors.", zap.Error(err))
-				}
-				for _, neighbor := range neighbors {
+				for _, neighbor := range host.Neighbors(context.Background()) {
 					host.Unicast(context.Background(), neighbor, "measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
 				}
 			}

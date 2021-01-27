@@ -43,7 +43,7 @@ func TestBroadcast(t *testing.T) {
 		for i := 0; i < n; i++ {
 			require.NoError(
 				t,
-				hosts[i].Broadcast("test", []byte(fmt.Sprintf("msg sent from %s", hosts[i].HostIdentity()))),
+				hosts[i].Broadcast(ctx, "test", []byte(fmt.Sprintf("msg sent from %s", hosts[i].HostIdentity()))),
 			)
 		}
 
@@ -85,8 +85,7 @@ func TestUnicast(t *testing.T) {
 	}
 
 	for i, host := range hosts {
-		neighbors, err := host.Neighbors(ctx)
-		require.NoError(t, err)
+		neighbors := host.Neighbors(ctx)
 		require.True(t, len(neighbors) > 0)
 
 		for _, neighbor := range neighbors {
