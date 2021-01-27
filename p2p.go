@@ -3,6 +3,7 @@ package p2p
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -44,6 +45,7 @@ type Config struct {
 	Gossip           bool          `yaml:"gossip"`
 	ConnectTimeout   time.Duration `yaml:"connectTimeout"`
 	MasterKey        string        `yaml:"masterKey"`
+	PrivateKey       string
 	ConnLowWater     int           `yaml:"connLowWater"`
 	ConnHighWater    int           `yaml:"connHighWater"`
 	ConnGracePeriod  time.Duration `yaml:"connGracePeriod"`
@@ -59,6 +61,7 @@ var DefaultConfig = Config{
 	Gossip:           false,
 	ConnectTimeout:   time.Minute,
 	MasterKey:        "",
+	PrivateKey:       "",
 	ConnLowWater:     200,
 	ConnHighWater:    500,
 	ConnGracePeriod:  0,
@@ -171,10 +174,25 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if masterKey == "" {
 		masterKey = fmt.Sprintf("%s:%d", ip, cfg.Port)
 	}
-	sk, _, err := generateKeyPair()
-	if err != nil {
-		return nil, err
+
+	var sk crypto.PrivKey
+	if cfg.PrivateKey == "" {
+		sk, _, err = generateKeyPair()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		keyBytes, err := base64.StdEncoding.DecodeString(cfg.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+
+		sk, err = crypto.UnmarshalEd25519PrivateKey(keyBytes)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	var extMultiAddr multiaddr.Multiaddr
 	// Set external address and replace private key it external host name is given
 	if cfg.ExternalHostName != "" {
@@ -188,6 +206,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		if masterKey == "" {
 			masterKey = fmt.Sprintf("%s:%d", cfg.ExternalHostName, cfg.ExternalPort)
 		}
+
 		sk, _, err = generateKeyPair()
 		if err != nil {
 			return nil, err
