@@ -145,13 +145,14 @@ func main() {
 		host.JoinOverlay(context.Background())
 	}
 
+	ctx := context.Background()
 	tick := time.Tick(time.Duration(frequency) * time.Millisecond)
 	for {
 		select {
 		case <-tick:
 			var err error
 			if broadcast {
-				err = host.Broadcast("measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
+				err = host.Broadcast(ctx, "measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
 			} else {
 				neighbors, err := host.Neighbors(context.Background())
 				if err != nil {

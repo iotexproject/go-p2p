@@ -11,105 +11,104 @@ import (
 	"os"
 	"time"
 
-	"github.com/pkg/errors"
-	"golang.org/x/time/rate"
-
-	lru "github.com/hashicorp/golang-lru"
+	"github.com/hashicorp/golang-lru"
 	"github.com/ipfs/go-cid"
-	"github.com/libp2p/go-libp2p"
-	relay "github.com/libp2p/go-libp2p-circuit"
-	connmgr "github.com/libp2p/go-libp2p-connmgr"
-	crypto "github.com/libp2p/go-libp2p-crypto"
-	discovery "github.com/libp2p/go-libp2p-discovery"
-	host "github.com/libp2p/go-libp2p-host"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
-	dhtopts "github.com/libp2p/go-libp2p-kad-dht/opts"
-	net "github.com/libp2p/go-libp2p-net"
-	peer "github.com/libp2p/go-libp2p-peer"
-	peerstore "github.com/libp2p/go-libp2p-peerstore"
-	pnet "github.com/libp2p/go-libp2p-pnet"
-	protocol "github.com/libp2p/go-libp2p-protocol"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	stream "github.com/libp2p/go-libp2p-transport-upgrader"
-	"github.com/libp2p/go-tcp-transport"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
-	sm_yamux "github.com/whyrusleeping/go-smux-yamux"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
+
+	"github.com/libp2p/go-libp2p"
+	relay "github.com/libp2p/go-libp2p-circuit"
+	"github.com/libp2p/go-libp2p-connmgr"
+	"github.com/libp2p/go-libp2p-core"
+	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/pnet"
+	"github.com/libp2p/go-libp2p-core/protocol"
+	"github.com/libp2p/go-libp2p-discovery"
+	"github.com/libp2p/go-libp2p-kad-dht"
+	dhtopts "github.com/libp2p/go-libp2p-kad-dht/opts"
+	"github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p-secio"
+	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
+	yamux "github.com/libp2p/go-libp2p-yamux"
+	"github.com/libp2p/go-tcp-transport"
 )
 
-func init() {
-	multiaddr.SwapToP2pMultiaddrs()
-}
-
-// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
-type HandleBroadcast func(ctx context.Context, data []byte) error
-
-// HandleUnicast defines the callback function triggered when a unicast message reaches a host
-type HandleUnicast func(ctx context.Context, w io.Writer, data []byte) error
-
-// Config enumerates the configs required by a host
-type Config struct {
-	HostName                 string          `yaml:"hostName"`
-	Port                     int             `yaml:"port"`
-	ExternalHostName         string          `yaml:"externalHostName"`
-	ExternalPort             int             `yaml:"externalPort"`
-	SecureIO                 bool            `yaml:"secureIO"`
-	Gossip                   bool            `yaml:"gossip"`
-	ConnectTimeout           time.Duration   `yaml:"connectTimeout"`
-	MasterKey                string          `yaml:"masterKey"`
-	Relay                    string          `yaml:"relay"` // could be `active`, `nat`, `disable`
-	ConnLowWater             int             `yaml:"connLowWater"`
-	ConnHighWater            int             `yaml:"connHighWater"`
-	RateLimiterLRUSize       int             `yaml:"rateLimiterLRUSize"`
-	BlackListLRUSize         int             `yaml:"blackListLRUSize"`
-	BlackListCleanupInterval time.Duration   `yaml:"blackListCleanupInterval"`
-	ConnGracePeriod          time.Duration   `yaml:"connGracePeriod"`
-	EnableRateLimit          bool            `yaml:"enableRateLimit"`
-	RateLimit                RateLimitConfig `yaml:"rateLimit"`
-	PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
-}
-
-// RateLimitConfig all numbers are per second value.
-type RateLimitConfig struct {
-	GlobalUnicastAvg   int `yaml:"globalUnicastAvg"`
-	GlobalUnicastBurst int `yaml:"globalUnicastBurst"`
-	PeerAvg            int `yaml:"peerAvg"`
-	PeerBurst          int `yaml:"peerBurst"`
-}
-
 // ProtocolDHT is the DHT protocol ID
-var ProtocolDHT protocol.ID = "/iotex/kad/1.0.0"
+const ProtocolDHT protocol.ID = "/iotex/kad/1.0.0"
 
-// DefaultConfig is a set of default configs
-var DefaultConfig = Config{
-	HostName:                 "127.0.0.1",
-	Port:                     30001,
-	ExternalHostName:         "",
-	ExternalPort:             30001,
-	SecureIO:                 false,
-	Gossip:                   false,
-	ConnectTimeout:           time.Minute,
-	MasterKey:                "",
-	Relay:                    "disable",
-	ConnLowWater:             200,
-	ConnHighWater:            500,
-	RateLimiterLRUSize:       1000,
-	BlackListLRUSize:         1000,
-	BlackListCleanupInterval: 600 * time.Second,
-	ConnGracePeriod:          0,
-	EnableRateLimit:          false,
-	RateLimit:                DefaultRatelimitConfig,
-	PrivateNetworkPSK:        "",
-}
+type (
+	// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
+	HandleBroadcast func(ctx context.Context, data []byte) error
 
-// DefaultRatelimitConfig is the default rate limit config
-var DefaultRatelimitConfig = RateLimitConfig{
-	GlobalUnicastAvg:   300,
-	GlobalUnicastBurst: 500,
-	PeerAvg:            300,
-	PeerBurst:          500,
-}
+	// HandleUnicast defines the callback function triggered when a unicast message reaches a host
+	HandleUnicast func(ctx context.Context, w io.Writer, data []byte) error
+
+	// Config enumerates the configs required by a host
+	Config struct {
+		HostName                 string          `yaml:"hostName"`
+		Port                     int             `yaml:"port"`
+		ExternalHostName         string          `yaml:"externalHostName"`
+		ExternalPort             int             `yaml:"externalPort"`
+		SecureIO                 bool            `yaml:"secureIO"`
+		Gossip                   bool            `yaml:"gossip"`
+		ConnectTimeout           time.Duration   `yaml:"connectTimeout"`
+		MasterKey                string          `yaml:"masterKey"`
+		Relay                    string          `yaml:"relay"` // could be `active`, `nat`, `disable`
+		ConnLowWater             int             `yaml:"connLowWater"`
+		ConnHighWater            int             `yaml:"connHighWater"`
+		RateLimiterLRUSize       int             `yaml:"rateLimiterLRUSize"`
+		BlackListLRUSize         int             `yaml:"blackListLRUSize"`
+		BlackListCleanupInterval time.Duration   `yaml:"blackListCleanupInterval"`
+		ConnGracePeriod          time.Duration   `yaml:"connGracePeriod"`
+		EnableRateLimit          bool            `yaml:"enableRateLimit"`
+		RateLimit                RateLimitConfig `yaml:"rateLimit"`
+		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
+	}
+
+	// RateLimitConfig all numbers are per second value.
+	RateLimitConfig struct {
+		GlobalUnicastAvg   int `yaml:"globalUnicastAvg"`
+		GlobalUnicastBurst int `yaml:"globalUnicastBurst"`
+		PeerAvg            int `yaml:"peerAvg"`
+		PeerBurst          int `yaml:"peerBurst"`
+	}
+)
+
+var (
+	// DefaultConfig is a set of default configs
+	DefaultConfig = Config{
+		HostName:                 "127.0.0.1",
+		Port:                     30001,
+		ExternalHostName:         "",
+		ExternalPort:             30001,
+		SecureIO:                 false,
+		Gossip:                   false,
+		ConnectTimeout:           time.Minute,
+		MasterKey:                "",
+		Relay:                    "disable",
+		ConnLowWater:             200,
+		ConnHighWater:            500,
+		RateLimiterLRUSize:       1000,
+		BlackListLRUSize:         1000,
+		BlackListCleanupInterval: 600 * time.Second,
+		ConnGracePeriod:          0,
+		EnableRateLimit:          false,
+		RateLimit:                DefaultRatelimitConfig,
+		PrivateNetworkPSK:        "",
+	}
+
+	// DefaultRatelimitConfig is the default rate limit config
+	DefaultRatelimitConfig = RateLimitConfig{
+		GlobalUnicastAvg:   300,
+		GlobalUnicastBurst: 500,
+		PeerAvg:            300,
+		PeerBurst:          500,
+	}
+)
 
 // Option defines the option function to modify the config for a host
 type Option func(cfg *Config) error
@@ -215,13 +214,13 @@ func PrivateNetworkPSK(privateNetworkPSK string) Option {
 
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
-	host           host.Host
+	host           core.Host
 	cfg            Config
-	topics         map[string]interface{}
+	topics         map[string]bool
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
-	newPubSub      func(ctx context.Context, h host.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
-	pubs           map[string]*pubsub.PubSub
+	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
+	pubs           map[string]*pubsub.Topic
 	blacklists     map[string]*LRUBlacklist
 	subs           map[string]*pubsub.Subscription
 	close          chan interface{}
@@ -281,10 +280,12 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 			return addrs
 		}),
 		libp2p.Identity(sk),
-		libp2p.Transport(func(upgrader *stream.Upgrader) *tcp.TcpTransport {
+		libp2p.DefaultSecurity,
+		libp2p.Security(secio.ID, secio.New),
+		libp2p.Transport(func(upgrader *tptu.Upgrader) *tcp.TcpTransport {
 			return &tcp.TcpTransport{Upgrader: upgrader, ConnectTimeout: cfg.ConnectTimeout}
 		}),
-		libp2p.Muxer("/yamux/2.0.0", sm_yamux.DefaultTransport),
+		libp2p.Muxer("/yamux/2.0.0", yamux.DefaultTransport),
 		libp2p.ConnectionManager(connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)),
 	}
 	if !cfg.SecureIO {
@@ -306,7 +307,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		if err != nil {
 			return nil, err
 		}
-		p, err := pnet.NewProtector(f)
+		p, err := pnet.DecodeV1PSK(f)
 		if err != nil {
 			return nil, err
 		}
@@ -339,11 +340,11 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	myHost := Host{
 		host:           host,
 		cfg:            cfg,
-		topics:         make(map[string]interface{}),
+		topics:         make(map[string]bool),
 		kad:            kad,
 		kadKey:         cid,
 		newPubSub:      newPubSub,
-		pubs:           make(map[string]*pubsub.PubSub),
+		pubs:           make(map[string]*pubsub.Topic),
 		blacklists:     make(map[string]*LRUBlacklist),
 		subs:           make(map[string]*pubsub.Subscription),
 		close:          make(chan interface{}),
@@ -371,10 +372,10 @@ func (h *Host) JoinOverlay(ctx context.Context) {
 
 // AddUnicastPubSub adds a unicast topic that the host will pay attention to
 func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
-	if _, ok := h.topics[topic]; ok {
+	if h.topics[topic] {
 		return nil
 	}
-	h.host.SetStreamHandler(protocol.ID(topic), func(stream net.Stream) {
+	h.host.SetStreamHandler(protocol.ID(topic), func(stream core.Stream) {
 		defer func() {
 			if err := stream.Close(); err != nil {
 				Logger().Error("Error when closing a unicast stream.", zap.Error(err))
@@ -406,7 +407,7 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 			Logger().Error("Error when processing a unicast message.", zap.Error(err))
 		}
 	})
-	h.topics[topic] = nil
+	h.topics[topic] = true
 	return nil
 }
 
@@ -430,11 +431,15 @@ func (h *Host) AddBroadcastPubSub(topic string, callback HandleBroadcast) error 
 	if err != nil {
 		return err
 	}
-	sub, err := pub.Subscribe(topic)
+	top, err := pub.Join(topic)
 	if err != nil {
 		return err
 	}
-	h.pubs[topic] = pub
+	sub, err := top.Subscribe()
+	if err != nil {
+		return err
+	}
+	h.pubs[topic] = top
 	h.blacklists[topic] = blacklist
 	h.subs[topic] = sub
 	go func() {
@@ -479,7 +484,7 @@ func (h *Host) AddBroadcastPubSub(topic string, callback HandleBroadcast) error 
 
 // ConnectWithMultiaddr connects a peer given the multi address
 func (h *Host) ConnectWithMultiaddr(ctx context.Context, ma multiaddr.Multiaddr) error {
-	target, err := peerstore.InfoFromP2pAddr(ma)
+	target, err := peer.AddrInfoFromP2pAddr(ma)
 	if err != nil {
 		return err
 	}
@@ -494,7 +499,7 @@ func (h *Host) ConnectWithMultiaddr(ctx context.Context, ma multiaddr.Multiaddr)
 }
 
 // Connect connects a peer.
-func (h *Host) Connect(ctx context.Context, target peerstore.PeerInfo) error {
+func (h *Host) Connect(ctx context.Context, target core.PeerAddrInfo) error {
 	if err := h.host.Connect(ctx, target); err != nil {
 		return err
 	}
@@ -506,16 +511,16 @@ func (h *Host) Connect(ctx context.Context, target peerstore.PeerInfo) error {
 }
 
 // Broadcast sends a message to the hosts who subscribe the topic
-func (h *Host) Broadcast(topic string, data []byte) error {
+func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
 	pub, ok := h.pubs[topic]
 	if !ok {
 		return nil
 	}
-	return pub.Publish(topic, data)
+	return pub.Publish(ctx, data)
 }
 
 // Unicast sends a message to a peer on the given address
-func (h *Host) Unicast(ctx context.Context, target peerstore.PeerInfo, topic string, data []byte) error {
+func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic string, data []byte) error {
 	if err := h.Connect(ctx, target); err != nil {
 		return err
 	}
@@ -523,11 +528,9 @@ func (h *Host) Unicast(ctx context.Context, target peerstore.PeerInfo, topic str
 	if err != nil {
 		return err
 	}
-	defer func() { err = stream.Close() }()
-	if _, err = stream.Write(data); err != nil {
-		return err
-	}
-	return nil
+	defer stream.Close()
+	_, err = stream.Write(data)
+	return err
 }
 
 // HostIdentity returns the host identity string
@@ -547,14 +550,14 @@ func (h *Host) Addresses() []multiaddr.Multiaddr {
 }
 
 // Info returns host's perr info.
-func (h *Host) Info() peerstore.PeerInfo {
-	return peerstore.PeerInfo{ID: h.host.ID(), Addrs: h.host.Addrs()}
+func (h *Host) Info() core.PeerAddrInfo {
+	return core.PeerAddrInfo{ID: h.host.ID(), Addrs: h.host.Addrs()}
 }
 
 // Neighbors returns the closest peer addresses
-func (h *Host) Neighbors(ctx context.Context) ([]peerstore.PeerInfo, error) {
+func (h *Host) Neighbors(ctx context.Context) ([]core.PeerAddrInfo, error) {
 	peers := h.host.Peerstore().Peers()
-	dedupedPeers := make(map[string]peer.ID)
+	dedupedPeers := make(map[string]core.PeerID)
 	for _, p := range peers {
 		idStr := p.Pretty()
 		if idStr == h.host.ID().Pretty() || idStr == "" {
@@ -562,16 +565,20 @@ func (h *Host) Neighbors(ctx context.Context) ([]peerstore.PeerInfo, error) {
 		}
 		dedupedPeers[idStr] = p
 	}
-	neighbors := make([]peerstore.PeerInfo, 0)
+	Logger().Info("0.11.0", zap.Any("dedup", dedupedPeers))
+	neighbors := make([]core.PeerAddrInfo, 0)
 	for _, p := range dedupedPeers {
-		neighbors = append(neighbors, h.kad.FindLocal(p))
+		peer := h.kad.FindLocal(p)
+		if peer.ID != "" && len(peer.Addrs) > 0 {
+			neighbors = append(neighbors, peer)
+		}
 	}
+	Logger().Info("0.11.0", zap.Any("neighbors", neighbors))
 	return neighbors, nil
 }
 
 // Close closes the host
 func (h *Host) Close() error {
-	close(h.close)
 	for _, sub := range h.subs {
 		sub.Cancel()
 	}
@@ -581,10 +588,11 @@ func (h *Host) Close() error {
 	if err := h.host.Close(); err != nil {
 		return err
 	}
+	close(h.close)
 	return nil
 }
 
-func (h *Host) allowSource(src peer.ID) (bool, error) {
+func (h *Host) allowSource(src core.PeerID) (bool, error) {
 	if !h.cfg.EnableRateLimit {
 		return true, nil
 	}
