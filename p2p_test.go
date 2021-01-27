@@ -43,7 +43,7 @@ func TestBroadcast(t *testing.T) {
 		for i := 0; i < n; i++ {
 			require.NoError(
 				t,
-				hosts[i].Broadcast("test", []byte(fmt.Sprintf("msg sent from %s", hosts[i].HostIdentity()))),
+				hosts[i].Broadcast(ctx, "test", []byte(fmt.Sprintf("msg sent from %s", hosts[i].HostIdentity()))),
 			)
 		}
 
