@@ -6,7 +6,7 @@ require (
 	github.com/beorn7/perks v1.0.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/ipfs/go-cid v0.0.5
-	github.com/libp2p/go-libp2p v0.6.0
+	github.com/libp2p/go-libp2p v0.7.2
 	github.com/libp2p/go-libp2p-circuit v0.1.4
 	github.com/libp2p/go-libp2p-connmgr v0.2.0
 	github.com/libp2p/go-libp2p-core v0.5.0
@@ -14,7 +14,7 @@ require (
 	github.com/libp2p/go-libp2p-kad-dht v0.4.1
 	github.com/libp2p/go-libp2p-pubsub v0.2.4
 	github.com/libp2p/go-libp2p-transport-upgrader v0.2.0
-	github.com/libp2p/go-libp2p-yamux v0.2.2
+	github.com/libp2p/go-libp2p-yamux v0.2.6
 	github.com/libp2p/go-tcp-transport v0.1.1
 	github.com/multiformats/go-multiaddr v0.2.1
 	github.com/multiformats/go-multihash v0.0.13
