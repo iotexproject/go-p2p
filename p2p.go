@@ -29,7 +29,7 @@ import (
 	discovery "github.com/libp2p/go-libp2p-discovery"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dhtopts "github.com/libp2p/go-libp2p-kad-dht/opts"
-	pnet "github.com/libp2p/go-libp2p-pnet"
+	pnet "github.com/libp2p/go-libp2p-core/pnet"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
@@ -300,7 +300,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		if err != nil {
 			return nil, err
 		}
-		p, err := pnet.NewProtector(f)
+		p, err := pnet.DecodeV1PSK(f)
 		if err != nil {
 			return nil, err
 		}
