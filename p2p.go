@@ -25,11 +25,11 @@ import (
 	"github.com/libp2p/go-libp2p-core"
 	crypto "github.com/libp2p/go-libp2p-core/crypto"
 	peer "github.com/libp2p/go-libp2p-core/peer"
+	pnet "github.com/libp2p/go-libp2p-core/pnet"
 	protocol "github.com/libp2p/go-libp2p-core/protocol"
 	discovery "github.com/libp2p/go-libp2p-discovery"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dhtopts "github.com/libp2p/go-libp2p-kad-dht/opts"
-	pnet "github.com/libp2p/go-libp2p-core/pnet"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
@@ -424,7 +424,11 @@ func (h *Host) AddBroadcastPubSub(topic string, callback HandleBroadcast) error 
 	if err != nil {
 		return err
 	}
-	sub, err := pub.Subscribe(topic)
+	top, err := pub.Join(topic)
+	if err != nil {
+		return err
+	}
+	sub, err := top.Subscribe()
 	if err != nil {
 		return err
 	}
@@ -500,12 +504,16 @@ func (h *Host) Connect(ctx context.Context, target core.PeerAddrInfo) error {
 }
 
 // Broadcast sends a message to the hosts who subscribe the topic
-func (h *Host) Broadcast(topic string, data []byte) error {
+func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
 	pub, ok := h.pubs[topic]
 	if !ok {
 		return nil
 	}
-	return pub.Publish(topic, data)
+	top, err := pub.Join(topic)
+	if err != nil {
+		return err
+	}
+	return top.Publish(ctx, data)
 }
 
 // Unicast sends a message to a peer on the given address
@@ -517,11 +525,9 @@ func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic stri
 	if err != nil {
 		return err
 	}
-	defer func() { err = stream.Close() }()
-	if _, err = stream.Write(data); err != nil {
-		return err
-	}
-	return nil
+	defer stream.Close()
+	_, err = stream.Write(data)
+	return err
 }
 
 // HostIdentity returns the host identity string
