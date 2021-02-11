@@ -21,90 +21,93 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	relay "github.com/libp2p/go-libp2p-circuit"
-	connmgr "github.com/libp2p/go-libp2p-connmgr"
+	"github.com/libp2p/go-libp2p-connmgr"
 	"github.com/libp2p/go-libp2p-core"
-	crypto "github.com/libp2p/go-libp2p-core/crypto"
-	peer "github.com/libp2p/go-libp2p-core/peer"
-	pnet "github.com/libp2p/go-libp2p-core/pnet"
-	protocol "github.com/libp2p/go-libp2p-core/protocol"
-	discovery "github.com/libp2p/go-libp2p-discovery"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
-	dhtopts "github.com/libp2p/go-libp2p-kad-dht/opts"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	secio "github.com/libp2p/go-libp2p-secio"
+	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/pnet"
+	"github.com/libp2p/go-libp2p-core/protocol"
+	"github.com/libp2p/go-libp2p-discovery"
+	"github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p-secio"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
 	"github.com/libp2p/go-tcp-transport"
 )
 
-// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
-type HandleBroadcast func(ctx context.Context, data []byte) error
+// ProtocolDHT is the IoTeX DHT protocol name
+const ProtocolDHT protocol.ID = "/iotex"
 
-// HandleUnicast defines the callback function triggered when a unicast message reaches a host
-type HandleUnicast func(ctx context.Context, w io.Writer, data []byte) error
+type (
+	// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
+	HandleBroadcast func(ctx context.Context, data []byte) error
 
-// Config enumerates the configs required by a host
-type Config struct {
-	HostName                 string          `yaml:"hostName"`
-	Port                     int             `yaml:"port"`
-	ExternalHostName         string          `yaml:"externalHostName"`
-	ExternalPort             int             `yaml:"externalPort"`
-	SecureIO                 bool            `yaml:"secureIO"`
-	Gossip                   bool            `yaml:"gossip"`
-	ConnectTimeout           time.Duration   `yaml:"connectTimeout"`
-	MasterKey                string          `yaml:"masterKey"`
-	Relay                    string          `yaml:"relay"` // could be `active`, `nat`, `disable`
-	ConnLowWater             int             `yaml:"connLowWater"`
-	ConnHighWater            int             `yaml:"connHighWater"`
-	RateLimiterLRUSize       int             `yaml:"rateLimiterLRUSize"`
-	BlackListLRUSize         int             `yaml:"blackListLRUSize"`
-	BlackListCleanupInterval time.Duration   `yaml:"blackListCleanupInterval"`
-	ConnGracePeriod          time.Duration   `yaml:"connGracePeriod"`
-	EnableRateLimit          bool            `yaml:"enableRateLimit"`
-	RateLimit                RateLimitConfig `yaml:"rateLimit"`
-	PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
-}
+	// HandleUnicast defines the callback function triggered when a unicast message reaches a host
+	HandleUnicast func(ctx context.Context, w io.Writer, data []byte) error
 
-// RateLimitConfig all numbers are per second value.
-type RateLimitConfig struct {
-	GlobalUnicastAvg   int `yaml:"globalUnicastAvg"`
-	GlobalUnicastBurst int `yaml:"globalUnicastBurst"`
-	PeerAvg            int `yaml:"peerAvg"`
-	PeerBurst          int `yaml:"peerBurst"`
-}
+	// Config enumerates the configs required by a host
+	Config struct {
+		HostName                 string          `yaml:"hostName"`
+		Port                     int             `yaml:"port"`
+		ExternalHostName         string          `yaml:"externalHostName"`
+		ExternalPort             int             `yaml:"externalPort"`
+		SecureIO                 bool            `yaml:"secureIO"`
+		Gossip                   bool            `yaml:"gossip"`
+		ConnectTimeout           time.Duration   `yaml:"connectTimeout"`
+		MasterKey                string          `yaml:"masterKey"`
+		Relay                    string          `yaml:"relay"` // could be `active`, `nat`, `disable`
+		ConnLowWater             int             `yaml:"connLowWater"`
+		ConnHighWater            int             `yaml:"connHighWater"`
+		RateLimiterLRUSize       int             `yaml:"rateLimiterLRUSize"`
+		BlackListLRUSize         int             `yaml:"blackListLRUSize"`
+		BlackListCleanupInterval time.Duration   `yaml:"blackListCleanupInterval"`
+		ConnGracePeriod          time.Duration   `yaml:"connGracePeriod"`
+		EnableRateLimit          bool            `yaml:"enableRateLimit"`
+		RateLimit                RateLimitConfig `yaml:"rateLimit"`
+		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
+	}
 
-// ProtocolDHT is the DHT protocol ID
-var ProtocolDHT protocol.ID = "/iotex/kad/1.0.0"
+	// RateLimitConfig all numbers are per second value.
+	RateLimitConfig struct {
+		GlobalUnicastAvg   int `yaml:"globalUnicastAvg"`
+		GlobalUnicastBurst int `yaml:"globalUnicastBurst"`
+		PeerAvg            int `yaml:"peerAvg"`
+		PeerBurst          int `yaml:"peerBurst"`
+	}
+)
 
-// DefaultConfig is a set of default configs
-var DefaultConfig = Config{
-	HostName:                 "127.0.0.1",
-	Port:                     30001,
-	ExternalHostName:         "",
-	ExternalPort:             30001,
-	SecureIO:                 false,
-	Gossip:                   false,
-	ConnectTimeout:           time.Minute,
-	MasterKey:                "",
-	Relay:                    "disable",
-	ConnLowWater:             200,
-	ConnHighWater:            500,
-	RateLimiterLRUSize:       1000,
-	BlackListLRUSize:         1000,
-	BlackListCleanupInterval: 600 * time.Second,
-	ConnGracePeriod:          0,
-	EnableRateLimit:          false,
-	RateLimit:                DefaultRatelimitConfig,
-	PrivateNetworkPSK:        "",
-}
+var (
+	// DefaultConfig is a set of default configs
+	DefaultConfig = Config{
+		HostName:                 "127.0.0.1",
+		Port:                     30001,
+		ExternalHostName:         "",
+		ExternalPort:             30001,
+		SecureIO:                 false,
+		Gossip:                   false,
+		ConnectTimeout:           time.Minute,
+		MasterKey:                "",
+		Relay:                    "disable",
+		ConnLowWater:             200,
+		ConnHighWater:            500,
+		RateLimiterLRUSize:       1000,
+		BlackListLRUSize:         1000,
+		BlackListCleanupInterval: 600 * time.Second,
+		ConnGracePeriod:          0,
+		EnableRateLimit:          false,
+		RateLimit:                DefaultRatelimitConfig,
+		PrivateNetworkPSK:        "",
+	}
 
-// DefaultRatelimitConfig is the default rate limit config
-var DefaultRatelimitConfig = RateLimitConfig{
-	GlobalUnicastAvg:   300,
-	GlobalUnicastBurst: 500,
-	PeerAvg:            300,
-	PeerBurst:          500,
-}
+	// DefaultRatelimitConfig is the default rate limit config
+	DefaultRatelimitConfig = RateLimitConfig{
+		GlobalUnicastAvg:   300,
+		GlobalUnicastBurst: 500,
+		PeerAvg:            300,
+		PeerBurst:          500,
+	}
+)
 
 // Option defines the option function to modify the config for a host
 type Option func(cfg *Config) error
@@ -314,7 +317,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	kad, err := dht.New(ctx, host, dhtopts.Protocols(ProtocolDHT))
+	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(ProtocolDHT))
 	if err != nil {
 	}
 	if err := kad.Bootstrap(ctx); err != nil {
