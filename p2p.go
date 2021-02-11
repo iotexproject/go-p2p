@@ -21,21 +21,23 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	relay "github.com/libp2p/go-libp2p-circuit"
-	connmgr "github.com/libp2p/go-libp2p-connmgr"
+	"github.com/libp2p/go-libp2p-connmgr"
 	"github.com/libp2p/go-libp2p-core"
-	crypto "github.com/libp2p/go-libp2p-core/crypto"
-	peer "github.com/libp2p/go-libp2p-core/peer"
-	pnet "github.com/libp2p/go-libp2p-core/pnet"
-	protocol "github.com/libp2p/go-libp2p-core/protocol"
-	discovery "github.com/libp2p/go-libp2p-discovery"
+	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/pnet"
+	"github.com/libp2p/go-libp2p-core/protocol"
+	"github.com/libp2p/go-libp2p-discovery"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
-	dhtopts "github.com/libp2p/go-libp2p-kad-dht/opts"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	secio "github.com/libp2p/go-libp2p-secio"
+	"github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p-secio"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
 	"github.com/libp2p/go-tcp-transport"
 )
+
+// ProtocolDHT is the IoTeX DHT protocol name
+const ProtocolDHT protocol.ID = "/iotex"
 
 // HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
 type HandleBroadcast func(ctx context.Context, data []byte) error
@@ -72,9 +74,6 @@ type RateLimitConfig struct {
 	PeerAvg            int `yaml:"peerAvg"`
 	PeerBurst          int `yaml:"peerBurst"`
 }
-
-// ProtocolDHT is the DHT protocol ID
-var ProtocolDHT protocol.ID = "/iotex/kad/1.0.0"
 
 // DefaultConfig is a set of default configs
 var DefaultConfig = Config{
@@ -314,7 +313,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	kad, err := dht.New(ctx, host, dhtopts.Protocols(ProtocolDHT))
+	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(ProtocolDHT))
 	if err != nil {
 	}
 	if err := kad.Bootstrap(ctx); err != nil {
