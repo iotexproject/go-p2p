@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"github.com/libp2p/go-libp2p-core/network"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -222,6 +223,7 @@ type Host struct {
 	pubs           map[string]*pubsub.PubSub
 	blacklists     map[string]*LRUBlacklist
 	subs           map[string]*pubsub.Subscription
+	streams        map[string]network.Stream
 	close          chan interface{}
 	ctx            context.Context
 	peersLimiters  *lru.Cache
@@ -346,6 +348,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		pubs:           make(map[string]*pubsub.PubSub),
 		blacklists:     make(map[string]*LRUBlacklist),
 		subs:           make(map[string]*pubsub.Subscription),
+		streams:        make(map[string]network.Stream),
 		close:          make(chan interface{}),
 		ctx:            ctx,
 		peersLimiters:  limiters,
@@ -527,13 +530,26 @@ func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic stri
 	if err := h.Connect(ctx, target); err != nil {
 		return err
 	}
-	stream, err := h.host.NewStream(ctx, target.ID, protocol.ID(topic))
+	stream, err := h.getStream(ctx, target.ID, topic)
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
 	_, err = stream.Write(data)
 	return err
+}
+
+func (h *Host) getStream(ctx context.Context, id core.PeerID, topic string) (network.Stream, error) {
+	streamKey := string(id) + topic
+	if stream, hit := h.streams[streamKey]; hit {
+		return stream, nil
+	}
+
+	stream, err := h.host.NewStream(ctx, id, protocol.ID(topic))
+	if err != nil {
+		return nil, err
+	}
+	h.streams[streamKey] = stream
+	return stream, nil
 }
 
 // HostIdentity returns the host identity string
@@ -583,6 +599,9 @@ func (h *Host) Close() error {
 	close(h.close)
 	for _, sub := range h.subs {
 		sub.Cancel()
+	}
+	for k := range h.streams {
+		h.streams[k].Close()
 	}
 	if err := h.kad.Close(); err != nil {
 		return err
