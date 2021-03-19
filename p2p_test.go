@@ -3,13 +3,14 @@ package p2p
 import (
 	"context"
 	"fmt"
-	"github.com/libp2p/go-libp2p-core/network"
-	"github.com/stretchr/testify/assert"
 	"io/ioutil"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/libp2p/go-libp2p-core/network"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/stretchr/testify/require"
 )
@@ -141,4 +142,21 @@ func TestUnicast_ReadReturnedStream(t *testing.T) {
 
 	require.NoError(t, p1.Close())
 	require.NoError(t, p2.Close())
+}
+
+func Test_NewHost_ExternalOpts(t *testing.T) {
+	ctx := context.Background()
+	opts := []Option{
+		Port(30001),
+		SecureIO(),
+		ExternalHostName("external-host"),
+		ExternalPort(4000),
+		MasterKey("1"),
+	}
+	host, err := NewHost(ctx, opts...)
+	assert.NoError(t, err)
+	assert.Equal(t, "external-host", host.cfg.ExternalHostName)
+	assert.Equal(t, 4000, host.cfg.ExternalPort)
+
+	defer host.Close()
 }
