@@ -175,14 +175,14 @@ func Test_NewHost_ExternalOpts_MasterKey(t *testing.T) {
 	opts := []Option{
 		Port(30001),
 		SecureIO(),
-		ExternalHostName("127.0.0.1"),
+		ExternalHostName("0.0.0.0"),
 		ExternalPort(4000),
 		MasterKey("mk1"),
 	}
 
 	host, err := NewHost(ctx, opts...)
 	assert.NoError(t, err)
-	assert.Equal(t, "127.0.0.1", host.cfg.ExternalHostName)
+	assert.Equal(t, "0.0.0.0", host.cfg.ExternalHostName)
 	assert.Equal(t, 4000, host.cfg.ExternalPort)
 	assert.Equal(t, "mk1", host.cfg.MasterKey)
 
