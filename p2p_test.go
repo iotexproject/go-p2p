@@ -151,17 +151,17 @@ func Test_NewHost_ExternalOpts_NoMasterKey(t *testing.T) {
 	opts := []Option{
 		Port(30001),
 		SecureIO(),
-		ExternalHostName("external-host"),
+		ExternalHostName("127.0.0.1"),
 		ExternalPort(4000),
 	}
 
 	host, err := NewHost(ctx, opts...)
 	assert.NoError(t, err)
-	assert.Equal(t, "external-host", host.cfg.ExternalHostName)
+	assert.Equal(t, "127.0.0.1", host.cfg.ExternalHostName)
 	assert.Equal(t, 4000, host.cfg.ExternalPort)
 	assert.Equal(t, "", host.cfg.MasterKey)
 
-	masterKey := fmt.Sprintf("%s:%d", "external-host", 4000)
+	masterKey := fmt.Sprintf("%s:%d", "127.0.0.1", 4000)
 	v1b := cid.V1Builder{Codec: cid.Raw, MhType: multihash.SHA2_256}
 	cid, err := v1b.Sum([]byte(masterKey))
 	assert.NoError(t, err)
@@ -175,14 +175,14 @@ func Test_NewHost_ExternalOpts_MasterKey(t *testing.T) {
 	opts := []Option{
 		Port(30001),
 		SecureIO(),
-		ExternalHostName("external-host"),
+		ExternalHostName("127.0.0.1"),
 		ExternalPort(4000),
 		MasterKey("mk1"),
 	}
 
 	host, err := NewHost(ctx, opts...)
 	assert.NoError(t, err)
-	assert.Equal(t, "external-host", host.cfg.ExternalHostName)
+	assert.Equal(t, "127.0.0.1", host.cfg.ExternalHostName)
 	assert.Equal(t, 4000, host.cfg.ExternalPort)
 	assert.Equal(t, "mk1", host.cfg.MasterKey)
 
