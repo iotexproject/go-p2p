@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p-core/network"
+	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/stretchr/testify/require"
@@ -144,19 +146,50 @@ func TestUnicast_ReadReturnedStream(t *testing.T) {
 	require.NoError(t, p2.Close())
 }
 
-func Test_NewHost_ExternalOpts(t *testing.T) {
+func Test_NewHost_ExternalOpts_NoMasterKey(t *testing.T) {
 	ctx := context.Background()
 	opts := []Option{
 		Port(30001),
 		SecureIO(),
 		ExternalHostName("external-host"),
 		ExternalPort(4000),
-		MasterKey("1"),
 	}
+
 	host, err := NewHost(ctx, opts...)
 	assert.NoError(t, err)
 	assert.Equal(t, "external-host", host.cfg.ExternalHostName)
 	assert.Equal(t, 4000, host.cfg.ExternalPort)
+	assert.Equal(t, "", host.cfg.MasterKey)
+
+	masterKey := fmt.Sprintf("%s:%d", "external-host", 4000)
+	v1b := cid.V1Builder{Codec: cid.Raw, MhType: multihash.SHA2_256}
+	cid, err := v1b.Sum([]byte(masterKey))
+	assert.NoError(t, err)
+	assert.Equal(t, cid, host.kadKey)
+
+	defer host.Close()
+}
+
+func Test_NewHost_ExternalOpts_MasterKey(t *testing.T) {
+	ctx := context.Background()
+	opts := []Option{
+		Port(30001),
+		SecureIO(),
+		ExternalHostName("external-host"),
+		ExternalPort(4000),
+		MasterKey("mk1"),
+	}
+
+	host, err := NewHost(ctx, opts...)
+	assert.NoError(t, err)
+	assert.Equal(t, "external-host", host.cfg.ExternalHostName)
+	assert.Equal(t, 4000, host.cfg.ExternalPort)
+	assert.Equal(t, "mk1", host.cfg.MasterKey)
+
+	v1b := cid.V1Builder{Codec: cid.Raw, MhType: multihash.SHA2_256}
+	cid, err := v1b.Sum([]byte("mk1"))
+	assert.NoError(t, err)
+	assert.Equal(t, cid, host.kadKey)
 
 	defer host.Close()
 }
