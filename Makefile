@@ -45,7 +45,7 @@ lint:
 
 .PHONY: test
 test: fmt
-	$(GOTEST) -short ./...
+	$(GOTEST) -short ./... --cover -coverprofile=coverage.txt -covermode=atomic
 
 .PHONY: clean
 clean:
