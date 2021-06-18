@@ -1,0 +1,49 @@
+# Use the latest 2.1 version of CircleCI pipeline process engine. See: https://circleci.com/docs/2.0/configuration-reference
+version: 2.1
+jobs:
+  test:
+    working_directory: /go/src/github.com/{{ORG_NAME}}/{{REPO_NAME}}
+    docker:
+      - image: circleci/golang:1.16.0
+    steps:
+      - checkout
+      - run: mkdir -p /tmp/test-results # create the test results directory
+      - run: git config --global url."https://qadrebot:$GITHUB_TOKEN@github.com".insteadOf "https://github.com"
+      - restore_cache:
+          keys:
+            - go-mod-v4-{{ checksum "go.sum" }}
+      - run:
+          name: Install Dependencies
+          command: go mod download
+      - save_cache:
+          key: go-mod-v4-{{ checksum "go.sum" }}
+          paths:
+            - "/go/pkg/mod"
+      # specify any bash command here prefixed with `run: `
+      - run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin latest
+      - run: make ci
+      - run: bash <(curl -s https://codecov.io/bash)
+      - store_test_results: # upload test results for display in Test Summary
+          path: /tmp/test-results
+          
+  deploy:
+    working_directory: /go/src/github.com/{{ORG_NAME}}/{{REPO_NAME}}
+    docker:
+      - image: circleci/golang:1.16.0
+    steps:
+      - checkout
+      - run: curl -sL https://git.io/goreleaser | bash
+  
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - test
+      - deploy:
+          # Only run this job on git tag pushes
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*(-.*)*/
+
