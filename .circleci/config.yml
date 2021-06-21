@@ -2,9 +2,9 @@
 version: 2.1
 jobs:
   test:
-    working_directory: /go/src/github.com/{{ORG_NAME}}/{{REPO_NAME}}
+    working_directory: ~/go/src/github.com/{{ORG_NAME}}/{{REPO_NAME}}
     docker:
-      - image: circleci/golang:1.16.0
+      - image: cimg/go:1.16
     steps:
       - checkout
       - run: mkdir -p /tmp/test-results # create the test results directory
@@ -27,9 +27,9 @@ jobs:
           path: /tmp/test-results
           
   deploy:
-    working_directory: /go/src/github.com/{{ORG_NAME}}/{{REPO_NAME}}
+    working_directory: ~/go/src/github.com/{{ORG_NAME}}/{{REPO_NAME}}
     docker:
-      - image: circleci/golang:1.16.0
+      - image: cimg/go:1.16
     steps:
       - checkout
       - run: curl -sL https://git.io/goreleaser | bash
