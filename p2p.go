@@ -61,6 +61,7 @@ type (
 		ConnHighWater            int             `yaml:"connHighWater"`
 		RateLimiterLRUSize       int             `yaml:"rateLimiterLRUSize"`
 		BlackListLRUSize         int             `yaml:"blackListLRUSize"`
+		BlackListErrorThreshold  int             `yaml:"blackListErrorThreshold"`
 		BlackListCleanupInterval time.Duration   `yaml:"blackListCleanupInterval"`
 		ConnGracePeriod          time.Duration   `yaml:"connGracePeriod"`
 		EnableRateLimit          bool            `yaml:"enableRateLimit"`
@@ -93,6 +94,7 @@ var (
 		ConnHighWater:            500,
 		RateLimiterLRUSize:       1000,
 		BlackListLRUSize:         1000,
+		BlackListErrorThreshold:  3,
 		BlackListCleanupInterval: 600 * time.Second,
 		ConnGracePeriod:          0,
 		EnableRateLimit:          false,
@@ -213,19 +215,20 @@ func PrivateNetworkPSK(privateNetworkPSK string) Option {
 
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
-	host           core.Host
-	cfg            Config
-	topics         map[string]bool
-	kad            *dht.IpfsDHT
-	kadKey         cid.Cid
-	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
-	pubs           map[string]*pubsub.Topic
-	blacklists     map[string]*LRUBlacklist
-	subs           map[string]*pubsub.Subscription
-	close          chan interface{}
-	ctx            context.Context
-	peersLimiters  *lru.Cache
-	unicastLimiter *rate.Limiter
+	host             core.Host
+	cfg              Config
+	topics           map[string]bool
+	kad              *dht.IpfsDHT
+	kadKey           cid.Cid
+	newPubSub        func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
+	pubs             map[string]*pubsub.Topic
+	blacklists       map[string]*LRUBlacklist
+	subs             map[string]*pubsub.Subscription
+	close            chan interface{}
+	ctx              context.Context
+	peersLimiters    *lru.Cache
+	unicastLimiter   *rate.Limiter
+	unicastBlocklist *CountBlocklist
 }
 
 // NewHost constructs a host struct
@@ -337,19 +340,20 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		return nil, err
 	}
 	myHost := Host{
-		host:           host,
-		cfg:            cfg,
-		topics:         make(map[string]bool),
-		kad:            kad,
-		kadKey:         cid,
-		newPubSub:      newPubSub,
-		pubs:           make(map[string]*pubsub.Topic),
-		blacklists:     make(map[string]*LRUBlacklist),
-		subs:           make(map[string]*pubsub.Subscription),
-		close:          make(chan interface{}),
-		ctx:            ctx,
-		peersLimiters:  limiters,
-		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
+		host:             host,
+		cfg:              cfg,
+		topics:           make(map[string]bool),
+		kad:              kad,
+		kadKey:           cid,
+		newPubSub:        newPubSub,
+		pubs:             make(map[string]*pubsub.Topic),
+		blacklists:       make(map[string]*LRUBlacklist),
+		subs:             make(map[string]*pubsub.Subscription),
+		close:            make(chan interface{}),
+		ctx:              ctx,
+		peersLimiters:    limiters,
+		unicastLimiter:   rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
+		unicastBlocklist: NewCountBlocklist(cfg.BlackListLRUSize, cfg.BlackListErrorThreshold, cfg.BlackListCleanupInterval),
 	}
 
 	addrs := make([]string, 0)
@@ -520,7 +524,17 @@ func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
 
 // Unicast sends a message to a peer on the given address
 func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic string, data []byte) error {
-	if err := h.Connect(ctx, target); err != nil {
+	if h.unicastBlocklist.Blocked(target.ID, time.Now()) {
+		return errors.New("peer is in blocklist at this moment")
+	}
+
+	var err error
+	defer func() {
+		if err != nil {
+			h.unicastBlocklist.Add(target.ID, time.Now())
+		}
+	}()
+	if err = h.Connect(ctx, target); err != nil {
 		return err
 	}
 	stream, err := h.host.NewStream(ctx, target.ID, protocol.ID(topic))
@@ -567,7 +581,7 @@ func (h *Host) Neighbors(ctx context.Context) ([]core.PeerAddrInfo, error) {
 	neighbors := make([]core.PeerAddrInfo, 0)
 	for _, p := range dedupedPeers {
 		peer := h.kad.FindLocal(p)
-		if peer.ID != "" && len(peer.Addrs) > 0 {
+		if peer.ID != "" && len(peer.Addrs) > 0 && !h.unicastBlocklist.Blocked(peer.ID, time.Now()) {
 			neighbors = append(neighbors, peer)
 		}
 	}
