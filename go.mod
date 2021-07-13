@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/hashicorp/golang-lru v0.5.4
+	github.com/iotexproject/go-pkgs v0.1.5
 	github.com/ipfs/go-cid v0.0.7
 	github.com/libp2p/go-libp2p v0.14.3
 	github.com/libp2p/go-libp2p-circuit v0.4.0
