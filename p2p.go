@@ -379,11 +379,6 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 		return nil
 	}
 	h.host.SetStreamHandler(protocol.ID(topic), func(stream core.Stream) {
-		defer func() {
-			if err := stream.Close(); err != nil {
-				Logger().Error("Error when closing a unicast stream.", zap.Error(err))
-			}
-		}()
 		if h.cfg.EnableRateLimit && !h.unicastLimiter.Allow() {
 			Logger().Warn("Drop unicast sream due to high traffic volume.")
 			return
@@ -534,14 +529,23 @@ func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic stri
 			h.unicastBlocklist.Add(target.ID, time.Now())
 		}
 	}()
-	if err = h.Connect(ctx, target); err != nil {
-		return err
+	stream, ok := GetUnicastStream(ctx)
+	if !ok {
+		if err = h.Connect(ctx, target); err != nil {
+			return err
+		}
+		stream, err = h.host.NewStream(ctx, target.ID, protocol.ID(topic))
+		if err != nil {
+			return err
+		}
+	} else {
+		Logger().Warn("============================================================ reuse stream ")
 	}
-	stream, err := h.host.NewStream(ctx, target.ID, protocol.ID(topic))
-	if err != nil {
-		return err
-	}
-	defer stream.Close()
+	defer func() {
+		if err := stream.Close(); err != nil {
+			Logger().Error("Error when closing a unicast stream.", zap.Error(err))
+		}
+	}()
 	_, err = stream.Write(data)
 	return err
 }
