@@ -562,10 +562,12 @@ func (h *Host) Neighbors(ctx context.Context) ([]peerstore.PeerInfo, error) {
 		}
 		dedupedPeers[idStr] = p
 	}
+	Logger().Info("dedup", zap.Any("dedup", dedupedPeers))
 	neighbors := make([]peerstore.PeerInfo, 0)
 	for _, p := range dedupedPeers {
 		neighbors = append(neighbors, h.kad.FindLocal(p))
 	}
+	Logger().Info("neighbors", zap.Any("neighbors", neighbors))
 	return neighbors, nil
 }
 
