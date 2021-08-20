@@ -6,6 +6,7 @@ import (
 	"io"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ func TestBroadcast(t *testing.T) {
 			opts = append(opts, options...)
 			host, err := NewHost(ctx, opts...)
 			require.NoError(t, err)
-			require.NoError(t, host.AddBroadcastPubSub("test", func(ctx context.Context, data []byte) error {
+			require.NoError(t, host.AddBroadcastPubSub(ctx, "test", func(ctx context.Context, data []byte) error {
 				fmt.Print(string(data))
 				fmt.Printf(", received by %s\n", host.HostIdentity())
 				return nil
@@ -47,6 +48,7 @@ func TestBroadcast(t *testing.T) {
 			)
 		}
 
+		time.Sleep(100 * time.Millisecond)
 		for i := 0; i < n; i++ {
 			require.NoError(t, hosts[i].Close())
 		}
@@ -86,7 +88,7 @@ func TestUnicast(t *testing.T) {
 
 	for i, host := range hosts {
 		neighbors := host.Neighbors(ctx)
-		require.True(t, len(neighbors) > 0)
+		require.True(t, len(neighbors) >= n/3)
 
 		for _, neighbor := range neighbors {
 			require.NoError(
@@ -96,6 +98,7 @@ func TestUnicast(t *testing.T) {
 		}
 	}
 
+	time.Sleep(100 * time.Millisecond)
 	for i := 0; i < n; i++ {
 		require.NoError(t, hosts[i].Close())
 	}

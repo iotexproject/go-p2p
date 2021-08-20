@@ -320,7 +320,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(ProtocolDHT))
+	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(ProtocolDHT), dht.Mode(dht.ModeServer))
 	if err != nil {
 	}
 	if err := kad.Bootstrap(ctx); err != nil {
@@ -416,7 +416,7 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 
 // AddBroadcastPubSub adds a broadcast topic that the host will pay attention to. This need to be called before using
 // Connect/JoinOverlay. Otherwise, pubsub may not be aware of the existing overlay topology
-func (h *Host) AddBroadcastPubSub(topic string, callback HandleBroadcast) error {
+func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback HandleBroadcast) error {
 	if _, ok := h.pubs[topic]; ok {
 		return nil
 	}
@@ -448,8 +448,9 @@ func (h *Host) AddBroadcastPubSub(topic string, callback HandleBroadcast) error 
 			select {
 			case <-h.close:
 				return
+			case <-ctx.Done():
+				return
 			default:
-				ctx := context.Background()
 				msg, err := sub.Next(ctx)
 				if err != nil {
 					Logger().Error("Error when subscribing a broadcast message.", zap.Error(err))
@@ -478,6 +479,8 @@ func (h *Host) AddBroadcastPubSub(topic string, callback HandleBroadcast) error 
 		for {
 			select {
 			case <-h.close:
+				return
+			case <-ctx.Done():
 				return
 			default:
 				time.Sleep(h.cfg.BlockListCleanupInterval)
@@ -582,17 +585,16 @@ func (h *Host) Info() core.PeerAddrInfo {
 
 // Neighbors returns the closest peer addresses
 func (h *Host) Neighbors(ctx context.Context) []core.PeerAddrInfo {
-	peers := h.host.Peerstore().Peers()
-	dedupedPeers := make(map[string]core.PeerID)
-	for _, p := range peers {
+	var (
+		dedup     = make(map[string]bool)
+		neighbors = make([]core.PeerAddrInfo, 0)
+	)
+	for _, p := range h.host.Peerstore().Peers() {
 		idStr := p.Pretty()
-		if idStr == h.host.ID().Pretty() || idStr == "" {
+		if dedup[idStr] || idStr == h.host.ID().Pretty() || idStr == "" {
 			continue
 		}
-		dedupedPeers[idStr] = p
-	}
-	neighbors := make([]core.PeerAddrInfo, 0)
-	for _, p := range dedupedPeers {
+		dedup[idStr] = true
 		peer := h.kad.FindLocal(p)
 		if peer.ID != "" && len(peer.Addrs) > 0 && !h.unicastBlocklist.Blocked(peer.ID, time.Now()) {
 			neighbors = append(neighbors, peer)

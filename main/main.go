@@ -100,7 +100,8 @@ func main() {
 	options = append(options, p2p.MasterKey("123"))
 	options = append(options, p2p.SecureIO())
 
-	host, err := p2p.NewHost(context.Background(), options...)
+	ctx := context.Background()
+	host, err := p2p.NewHost(ctx, options...)
 	if err != nil {
 		p2p.Logger().Panic("Error when instantiating a host.", zap.Error(err))
 	}
@@ -127,7 +128,7 @@ func main() {
 	HandleUnicastMsg := func(ctx context.Context, w io.Writer, data []byte) error {
 		return HandleMsg(ctx, data)
 	}
-	if err := host.AddBroadcastPubSub("measurement", HandleMsg); err != nil {
+	if err := host.AddBroadcastPubSub(ctx, "measurement", HandleMsg); err != nil {
 		p2p.Logger().Panic("Error when adding broadcast pubsub.", zap.Error(err))
 	}
 	if err := host.AddUnicastPubSub("measurement", HandleUnicastMsg); err != nil {
@@ -139,13 +140,12 @@ func main() {
 		if err != nil {
 			p2p.Logger().Panic("Error when parsing to the bootstrap node address", zap.Error(err))
 		}
-		if err := host.ConnectWithMultiaddr(context.Background(), ma); err != nil {
+		if err := host.ConnectWithMultiaddr(ctx, ma); err != nil {
 			p2p.Logger().Panic("Error when connecting to the bootstrap node", zap.Error(err))
 		}
-		host.JoinOverlay(context.Background())
+		host.JoinOverlay(ctx)
 	}
 
-	ctx := context.Background()
 	tick := time.Tick(time.Duration(frequency) * time.Millisecond)
 	for {
 		select {
@@ -154,8 +154,8 @@ func main() {
 			if broadcast {
 				err = host.Broadcast(ctx, "measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
 			} else {
-				for _, neighbor := range host.Neighbors(context.Background()) {
-					host.Unicast(context.Background(), neighbor, "measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
+				for _, neighbor := range host.Neighbors(ctx) {
+					host.Unicast(ctx, neighbor, "measurement", []byte(fmt.Sprintf("%s", host.HostIdentity())))
 				}
 			}
 			if err != nil {
