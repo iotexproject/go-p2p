@@ -36,9 +36,6 @@ import (
 	"github.com/libp2p/go-tcp-transport"
 )
 
-// ProtocolDHT is the IoTeX DHT protocol name
-const ProtocolDHT protocol.ID = "/iotex"
-
 type (
 	// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
 	HandleBroadcast func(ctx context.Context, data []byte) error
@@ -67,6 +64,7 @@ type (
 		EnableRateLimit          bool            `yaml:"enableRateLimit"`
 		RateLimit                RateLimitConfig `yaml:"rateLimit"`
 		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
+		DHTProtocolName          protocol.ID     `yaml:"dhtProtocol"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -100,6 +98,7 @@ var (
 		EnableRateLimit:          false,
 		RateLimit:                DefaultRatelimitConfig,
 		PrivateNetworkPSK:        "",
+		DHTProtocolName:          "/iotex",
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -213,6 +212,16 @@ func PrivateNetworkPSK(privateNetworkPSK string) Option {
 	}
 }
 
+// DHTProtocolName returns the prefix of dht protocol. MainNet uses "/iotex", while testNet uses "/iotexTestNet"
+func DHTProtocolName(chainID uint32) Option {
+	return func(cfg *Config) error {
+		if chainID != 1 {
+			cfg.DHTProtocolName = "/iotexTestNet"
+		}
+		return nil
+	}
+}
+
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
 	host             core.Host
@@ -320,7 +329,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(ProtocolDHT), dht.Mode(dht.ModeServer))
+	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(cfg.DHTProtocolName), dht.Mode(dht.ModeServer))
 	if err != nil {
 	}
 	if err := kad.Bootstrap(ctx); err != nil {
