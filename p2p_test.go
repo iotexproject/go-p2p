@@ -65,7 +65,7 @@ func TestBroadcast(t *testing.T) {
 
 func TestUnicast(t *testing.T) {
 	ctx := context.Background()
-	n := 30
+	n := 10
 	hosts := make([]*Host, n)
 	for i := 0; i < n; i++ {
 		host, err := NewHost(ctx, Port(30000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
@@ -88,7 +88,7 @@ func TestUnicast(t *testing.T) {
 
 	for i, host := range hosts {
 		neighbors := host.Neighbors(ctx)
-		require.True(t, len(neighbors) >= n/3)
+		require.True(t, len(neighbors) > 0)
 
 		for _, neighbor := range neighbors {
 			require.NoError(
