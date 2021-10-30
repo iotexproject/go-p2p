@@ -65,7 +65,7 @@ func TestBroadcast(t *testing.T) {
 
 func TestUnicast(t *testing.T) {
 	ctx := context.Background()
-	n := 10
+	n := 30
 	hosts := make([]*Host, n)
 	for i := 0; i < n; i++ {
 		host, err := NewHost(ctx, Port(30000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
