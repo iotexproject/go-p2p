@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"strconv"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -45,6 +46,7 @@ type (
 
 	// Config enumerates the configs required by a host
 	Config struct {
+		ProtocolName             protocol.ID     `yaml:"dhtProtocol"`
 		HostName                 string          `yaml:"hostName"`
 		Port                     int             `yaml:"port"`
 		ExternalHostName         string          `yaml:"externalHostName"`
@@ -64,7 +66,6 @@ type (
 		EnableRateLimit          bool            `yaml:"enableRateLimit"`
 		RateLimit                RateLimitConfig `yaml:"rateLimit"`
 		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
-		DHTProtocolName          protocol.ID     `yaml:"dhtProtocol"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -98,7 +99,7 @@ var (
 		EnableRateLimit:          false,
 		RateLimit:                DefaultRatelimitConfig,
 		PrivateNetworkPSK:        "",
-		DHTProtocolName:          "/iotex",
+		ProtocolName:             "/iotex",
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -212,11 +213,12 @@ func PrivateNetworkPSK(privateNetworkPSK string) Option {
 	}
 }
 
-// DHTProtocolName returns the prefix of dht protocol. MainNet uses "/iotex", while testNet uses "/iotexTestNet"
+// DHTProtocolName returns the prefix of dht protocol.
+// MainNet uses "/iotex", while other networks use "/iotex*"(e.g. "/iotex2", "iotex3")
 func DHTProtocolName(chainID uint32) Option {
 	return func(cfg *Config) error {
 		if chainID != 1 {
-			cfg.DHTProtocolName = "/iotexTestNet"
+			cfg.ProtocolName = protocol.ID("/iotex" + strconv.Itoa(int(chainID)))
 		}
 		return nil
 	}
@@ -329,8 +331,9 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(cfg.DHTProtocolName), dht.Mode(dht.ModeServer))
+	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(cfg.ProtocolName), dht.Mode(dht.ModeServer))
 	if err != nil {
+		return nil, err
 	}
 	if err := kad.Bootstrap(ctx); err != nil {
 		return nil, err
