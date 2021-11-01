@@ -65,10 +65,10 @@ func TestBroadcast(t *testing.T) {
 
 func TestUnicast(t *testing.T) {
 	ctx := context.Background()
-	n := 10
+	n := 100
 	hosts := make([]*Host, n)
 	for i := 0; i < n; i++ {
-		host, err := NewHost(ctx, Port(30000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
+		host, err := NewHost(ctx, Port(31000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
 		require.NoError(t, err)
 		require.NoError(t, host.AddUnicastPubSub("test", func(ctx context.Context, w io.Writer, data []byte) error {
 			fmt.Print(string(data))
