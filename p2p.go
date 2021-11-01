@@ -213,7 +213,7 @@ func PrivateNetworkPSK(privateNetworkPSK string) Option {
 	}
 }
 
-// DHTProtocolName returns the prefix of dht protocol.
+// DHTProtocolID returns the prefix of dht protocol.
 // MainNet uses "/iotex", while other networks use "/iotex*"(e.g. "/iotex2", "iotex3")
 func DHTProtocolID(chainID uint32) Option {
 	return func(cfg *Config) error {
