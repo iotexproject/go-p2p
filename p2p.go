@@ -46,7 +46,7 @@ type (
 
 	// Config enumerates the configs required by a host
 	Config struct {
-		ProtocolName             protocol.ID     `yaml:"dhtProtocol"`
+		ProtocolID               protocol.ID     `yaml:"protocolID "`
 		HostName                 string          `yaml:"hostName"`
 		Port                     int             `yaml:"port"`
 		ExternalHostName         string          `yaml:"externalHostName"`
@@ -99,7 +99,7 @@ var (
 		EnableRateLimit:          false,
 		RateLimit:                DefaultRatelimitConfig,
 		PrivateNetworkPSK:        "",
-		ProtocolName:             "/iotex",
+		ProtocolID:               "/iotex",
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -215,10 +215,10 @@ func PrivateNetworkPSK(privateNetworkPSK string) Option {
 
 // DHTProtocolName returns the prefix of dht protocol.
 // MainNet uses "/iotex", while other networks use "/iotex*"(e.g. "/iotex2", "iotex3")
-func DHTProtocolName(chainID uint32) Option {
+func DHTProtocolID(chainID uint32) Option {
 	return func(cfg *Config) error {
 		if chainID != 1 {
-			cfg.ProtocolName = protocol.ID("/iotex" + strconv.Itoa(int(chainID)))
+			cfg.ProtocolID = protocol.ID("/iotex" + strconv.Itoa(int(chainID)))
 		}
 		return nil
 	}
@@ -331,7 +331,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(cfg.ProtocolName), dht.Mode(dht.ModeServer))
+	kad, err := dht.New(ctx, host, dht.ProtocolPrefix(cfg.ProtocolID), dht.Mode(dht.ModeServer))
 	if err != nil {
 		return nil, err
 	}

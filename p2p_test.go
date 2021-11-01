@@ -88,7 +88,7 @@ func TestUnicast(t *testing.T) {
 
 	for i, host := range hosts {
 		neighbors := host.Neighbors(ctx)
-		require.True(t, len(neighbors) > 0)
+		require.True(t, len(neighbors) >= n/3)
 
 		for _, neighbor := range neighbors {
 			require.NoError(
