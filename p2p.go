@@ -80,6 +80,7 @@ type (
 var (
 	// DefaultConfig is a set of default configs
 	DefaultConfig = Config{
+		ProtocolID:               "/iotex",
 		HostName:                 "127.0.0.1",
 		Port:                     30001,
 		ExternalHostName:         "",
@@ -99,7 +100,6 @@ var (
 		EnableRateLimit:          false,
 		RateLimit:                DefaultRatelimitConfig,
 		PrivateNetworkPSK:        "",
-		ProtocolID:               "/iotex",
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -601,7 +601,7 @@ func (h *Host) Neighbors(ctx context.Context) []core.PeerAddrInfo {
 		dedup     = make(map[string]bool)
 		neighbors = make([]core.PeerAddrInfo, 0)
 	)
-	for _, p := range h.host.Peerstore().Peers() {
+	for _, p := range h.kad.RoutingTable().ListPeers() {
 		idStr := p.Pretty()
 		if dedup[idStr] || idStr == h.host.ID().Pretty() || idStr == "" {
 			continue
