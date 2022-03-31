@@ -21,17 +21,17 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-circuit"
-	"github.com/libp2p/go-libp2p-connmgr"
-	"github.com/libp2p/go-libp2p-core"
+	relay "github.com/libp2p/go-libp2p-circuit"
+	connmgr "github.com/libp2p/go-libp2p-connmgr"
+	core "github.com/libp2p/go-libp2p-core"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/pnet"
 	"github.com/libp2p/go-libp2p-core/protocol"
-	"github.com/libp2p/go-libp2p-discovery"
-	"github.com/libp2p/go-libp2p-kad-dht"
-	"github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p-secio"
+	discovery "github.com/libp2p/go-libp2p-discovery"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	secio "github.com/libp2p/go-libp2p-secio"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
 	"github.com/libp2p/go-tcp-transport"
@@ -550,6 +550,7 @@ func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic stri
 	if err := h.unicast(ctx, target, topic, data); err != nil {
 		Logger().Error("Error when sending a unicast message.", zap.Error(err))
 		h.unicastBlocklist.Add(target.ID, now)
+		h.kad.RoutingTable().RemovePeer(target.ID)
 		return err
 	}
 	return nil
@@ -557,14 +558,15 @@ func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic stri
 
 func (h *Host) unicast(ctx context.Context, target core.PeerAddrInfo, topic string, data []byte) error {
 	if err := h.host.Connect(ctx, target); err != nil {
-		return err
+		return errors.Wrap(err, "failed to connect the peer")
 	}
 	stream, err := h.host.NewStream(ctx, target.ID, protocol.ID(topic))
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to build stream with the peer")
 	}
 	if _, err = stream.Write(data); err != nil {
-		return err
+		stream.Close()
+		return errors.Wrap(err, "failed to write stream")
 	}
 	return stream.Close()
 }
@@ -601,7 +603,7 @@ func (h *Host) Neighbors(ctx context.Context) []core.PeerAddrInfo {
 		dedup     = make(map[string]bool)
 		neighbors = make([]core.PeerAddrInfo, 0)
 	)
-	for _, p := range h.host.Peerstore().Peers() {
+	for _, p := range h.kad.RoutingTable().ListPeers() {
 		idStr := p.Pretty()
 		if dedup[idStr] || idStr == h.host.ID().Pretty() || idStr == "" {
 			continue
