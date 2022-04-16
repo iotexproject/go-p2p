@@ -15,23 +15,24 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/multiformats/go-multihash"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-circuit"
-	"github.com/libp2p/go-libp2p-connmgr"
-	"github.com/libp2p/go-libp2p-core"
+	relay "github.com/libp2p/go-libp2p-circuit"
+	connmgr "github.com/libp2p/go-libp2p-connmgr"
+	core "github.com/libp2p/go-libp2p-core"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/pnet"
 	"github.com/libp2p/go-libp2p-core/protocol"
-	"github.com/libp2p/go-libp2p-discovery"
-	"github.com/libp2p/go-libp2p-kad-dht"
-	"github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p-secio"
+	discovery "github.com/libp2p/go-libp2p-discovery"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	secio "github.com/libp2p/go-libp2p-secio"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
 	"github.com/libp2p/go-tcp-transport"
@@ -66,6 +67,7 @@ type (
 		EnableRateLimit          bool            `yaml:"enableRateLimit"`
 		RateLimit                RateLimitConfig `yaml:"rateLimit"`
 		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
+		EnablePrivateIP          bool            `yaml:"enablePrivateIP"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -100,6 +102,7 @@ var (
 		RateLimit:                DefaultRatelimitConfig,
 		PrivateNetworkPSK:        "",
 		ProtocolID:               "/iotex",
+		EnablePrivateIP:          false,
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -213,6 +216,14 @@ func PrivateNetworkPSK(privateNetworkPSK string) Option {
 	}
 }
 
+// EnablePrivateIP advertises private ip
+func EnablePrivateIP(in bool) Option {
+	return func(cfg *Config) error {
+		cfg.EnablePrivateIP = in
+		return nil
+	}
+}
+
 // DHTProtocolID returns the prefix of dht protocol.
 // MainNet uses "/iotex", while other networks use "/iotex*"(e.g. "/iotex2", "iotex3")
 func DHTProtocolID(chainID uint32) Option {
@@ -288,9 +299,19 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/%s/tcp/%d", ip, cfg.Port)),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			if extMultiAddr != nil {
-				return append(addrs, extMultiAddr)
+				addrs = append(addrs, extMultiAddr)
 			}
-			return addrs
+			if cfg.EnablePrivateIP {
+				return addrs
+			}
+			// only public addr is advertised to the p2p network.
+			ret := []multiaddr.Multiaddr{}
+			for _, addr := range addrs {
+				if manet.IsPublicAddr(addr) {
+					ret = append(ret, addr)
+				}
+			}
+			return ret
 		}),
 		libp2p.Identity(sk),
 		libp2p.DefaultSecurity,
