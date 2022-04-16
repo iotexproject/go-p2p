@@ -311,6 +311,10 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 					ret = append(ret, addr)
 				}
 			}
+			if len(ret) == 0 {
+				// if no public addr is found, private ip is returned
+				return addrs
+			}
 			return ret
 		}),
 		libp2p.Identity(sk),
