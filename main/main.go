@@ -4,13 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/multiformats/go-multiaddr"
 
 	p2p "github.com/iotexproject/go-p2p"
@@ -125,7 +125,7 @@ func main() {
 		receiveCounter.WithLabelValues(id, host.HostIdentity()).Inc()
 		return nil
 	}
-	HandleUnicastMsg := func(ctx context.Context, w io.Writer, data []byte) error {
+	HandleUnicastMsg := func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
 		return HandleMsg(ctx, data)
 	}
 	if err := host.AddBroadcastPubSub(ctx, "measurement", HandleMsg); err != nil {
@@ -143,7 +143,8 @@ func main() {
 		if err := host.ConnectWithMultiaddr(ctx, ma); err != nil {
 			p2p.Logger().Panic("Error when connecting to the bootstrap node", zap.Error(err))
 		}
-		host.JoinOverlay(ctx)
+		host.JoinOverlay()
+		host.Advertise()
 	}
 
 	tick := time.Tick(time.Duration(frequency) * time.Millisecond)
