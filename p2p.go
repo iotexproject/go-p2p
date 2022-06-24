@@ -454,9 +454,8 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 		}
 
 		conn := stream.Conn()
-		remoteID := conn.RemotePeer()
 		RemoteAddr := peer.AddrInfo{
-			ID:    remoteID,
+			ID:    conn.RemotePeer(),
 			Addrs: []multiaddr.Multiaddr{conn.RemoteMultiaddr()},
 		}
 

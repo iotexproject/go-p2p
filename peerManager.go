@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/iotexproject/go-pkgs/cache/ttl"
@@ -60,6 +61,8 @@ type peerManager struct {
 	blacklistTolerance int
 	blacklistTimeout   time.Duration
 	advertiseInterval  time.Duration
+
+	once sync.Once
 }
 
 func newPeerManager(host core.Host, routing *discovery.RoutingDiscovery, ns string, opts ...peerManagerOpt) *peerManager {
@@ -81,29 +84,30 @@ func newPeerManager(host core.Host, routing *discovery.RoutingDiscovery, ns stri
 		bl, _ := ttl.NewCache()
 		pm.blacklist = bl
 	}
-
 	return pm
 }
 
 func (pm *peerManager) JoinOverlay() {
-	pm.advertiseQueue = make(chan string)
-	ticker := time.NewTicker(pm.advertiseInterval)
-	go func(pm *peerManager) {
-		for {
-			select {
-			case ns := <-pm.advertiseQueue:
-				_, err := pm.routing.Advertise(context.Background(), ns)
-				if err != nil {
-					Logger().Error("error when advertising.", zap.Error(err))
-				}
-			case <-ticker.C:
-				_, err := pm.routing.Advertise(context.Background(), pm.ns)
-				if err != nil {
-					Logger().Error("error when advertising.", zap.Error(err))
+	pm.once.Do(func() {
+		pm.advertiseQueue = make(chan string)
+		ticker := time.NewTicker(pm.advertiseInterval)
+		go func(pm *peerManager) {
+			for {
+				select {
+				case ns := <-pm.advertiseQueue:
+					_, err := pm.routing.Advertise(context.Background(), ns)
+					if err != nil {
+						Logger().Error("error when advertising.", zap.Error(err))
+					}
+				case <-ticker.C:
+					_, err := pm.routing.Advertise(context.Background(), pm.ns)
+					if err != nil {
+						Logger().Error("error when advertising.", zap.Error(err))
+					}
 				}
 			}
-		}
-	}(pm)
+		}(pm)
+	})
 }
 
 func (pm *peerManager) Advertise() error {
