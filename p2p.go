@@ -615,8 +615,8 @@ func (h *Host) ClearBlocklist() {
 	h.peerManager.ClearBlockList()
 }
 
-// AddBlocklist add the peer into the blocklist
-func (h *Host) AddBlocklist(id peer.ID) {
+// BlockPeer add the peer into the blocklist
+func (h *Host) BlockPeer(id peer.ID) {
 	h.peerManager.BlockPeer(id)
 }
 
