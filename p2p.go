@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -21,17 +20,17 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-circuit"
-	"github.com/libp2p/go-libp2p-connmgr"
-	"github.com/libp2p/go-libp2p-core"
+	relay "github.com/libp2p/go-libp2p-circuit"
+	connmgr "github.com/libp2p/go-libp2p-connmgr"
+	core "github.com/libp2p/go-libp2p-core"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/pnet"
 	"github.com/libp2p/go-libp2p-core/protocol"
-	"github.com/libp2p/go-libp2p-discovery"
-	"github.com/libp2p/go-libp2p-kad-dht"
-	"github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p-secio"
+	discovery "github.com/libp2p/go-libp2p-discovery"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	secio "github.com/libp2p/go-libp2p-secio"
 	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
 	"github.com/libp2p/go-tcp-transport"
@@ -42,7 +41,7 @@ type (
 	HandleBroadcast func(ctx context.Context, data []byte) error
 
 	// HandleUnicast defines the callback function triggered when a unicast message reaches a host
-	HandleUnicast func(ctx context.Context, w io.Writer, data []byte) error
+	HandleUnicast func(context.Context, peer.AddrInfo, []byte) error
 
 	// Config enumerates the configs required by a host
 	Config struct {
@@ -54,6 +53,7 @@ type (
 		SecureIO                 bool            `yaml:"secureIO"`
 		Gossip                   bool            `yaml:"gossip"`
 		ConnectTimeout           time.Duration   `yaml:"connectTimeout"`
+		BlackListTimeout         time.Duration   `yaml:"blackListTimeout"`
 		MasterKey                string          `yaml:"masterKey"`
 		Relay                    string          `yaml:"relay"` // could be `active`, `nat`, `disable`
 		ConnLowWater             int             `yaml:"connLowWater"`
@@ -66,6 +66,9 @@ type (
 		EnableRateLimit          bool            `yaml:"enableRateLimit"`
 		RateLimit                RateLimitConfig `yaml:"rateLimit"`
 		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
+		GroupID                  string          `yaml:"groupID"`
+		MaxPeer                  int             `yaml:"maxPeer"`
+		BlacklistTolerance       int             `yaml:"blacklistTolerance"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -87,6 +90,7 @@ var (
 		SecureIO:                 false,
 		Gossip:                   false,
 		ConnectTimeout:           time.Minute,
+		BlackListTimeout:         10 * time.Minute,
 		MasterKey:                "",
 		Relay:                    "disable",
 		ConnLowWater:             200,
@@ -100,6 +104,9 @@ var (
 		RateLimit:                DefaultRatelimitConfig,
 		PrivateNetworkPSK:        "",
 		ProtocolID:               "/iotex",
+		GroupID:                  "iotex",
+		MaxPeer:                  30,
+		BlacklistTolerance:       3,
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -224,22 +231,41 @@ func DHTProtocolID(chainID uint32) Option {
 	}
 }
 
+// DHTGroupID helps node finds peers of the same GroupID in dht discovering.
+// MainNet uses "iotex", while other networks use "iotex*"(e.g. "iotex2", "iotex3")
+func DHTGroupID(chainID uint32) Option {
+	return func(cfg *Config) error {
+		if chainID != 1 {
+			cfg.GroupID = "iotex" + strconv.Itoa(int(chainID))
+		}
+		return nil
+	}
+}
+
+// WithMaxPeer config MaxPeer option.
+func WithMaxPeer(num uint32) Option {
+	return func(cfg *Config) error {
+		cfg.MaxPeer = int(num)
+		return nil
+	}
+}
+
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
-	host             core.Host
-	cfg              Config
-	topics           map[string]bool
-	kad              *dht.IpfsDHT
-	kadKey           cid.Cid
-	newPubSub        func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
-	pubs             map[string]*pubsub.Topic
-	blacklists       map[string]*LRUBlacklist
-	subs             map[string]*pubsub.Subscription
-	close            chan interface{}
-	ctx              context.Context
-	peersLimiters    *lru.Cache
-	unicastLimiter   *rate.Limiter
-	unicastBlocklist *CountBlocklist
+	host           core.Host
+	cfg            Config
+	topics         map[string]bool
+	kad            *dht.IpfsDHT
+	kadKey         cid.Cid
+	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
+	pubs           map[string]*pubsub.Topic
+	blacklists     map[string]*LRUBlacklist
+	subs           map[string]*pubsub.Subscription
+	close          chan interface{}
+	ctx            context.Context
+	peersLimiters  *lru.Cache
+	unicastLimiter *rate.Limiter
+	peerManager    *peerManager
 }
 
 // NewHost constructs a host struct
@@ -254,28 +280,17 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	masterKey := cfg.MasterKey
-	// If ID is not given use network address instead
-	if masterKey == "" {
-		masterKey = fmt.Sprintf("%s:%d", ip, cfg.Port)
-	}
-	sk, _, err := generateKeyPair(masterKey)
-	if err != nil {
-		return nil, err
-	}
-	var extMultiAddr multiaddr.Multiaddr
+	var (
+		extMultiAddr multiaddr.Multiaddr
+		masterKey    = cfg.MasterKey
+	)
 	// Set external address and replace private key it external host name is given
 	if cfg.ExternalHostName != "" {
-		extIP, err := EnsureIPv4(cfg.ExternalHostName)
-		if err != nil {
-			return nil, err
-		}
-		masterKey := cfg.MasterKey
 		// If ID is not given use network address instead
 		if masterKey == "" {
 			masterKey = fmt.Sprintf("%s:%d", cfg.ExternalHostName, cfg.ExternalPort)
 		}
-		sk, _, err = generateKeyPair(masterKey)
+		extIP, err := EnsureIPv4(cfg.ExternalHostName)
 		if err != nil {
 			return nil, err
 		}
@@ -283,6 +298,15 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		// If ID is not given use network address instead
+		if masterKey == "" {
+			masterKey = fmt.Sprintf("%s:%d", ip, cfg.Port)
+		}
+	}
+	prikey, _, err := generateKeyPair(masterKey)
+	if err != nil {
+		return nil, err
 	}
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/%s/tcp/%d", ip, cfg.Port)),
@@ -292,17 +316,19 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 			}
 			return addrs
 		}),
-		libp2p.Identity(sk),
+		libp2p.Identity(prikey),
 		libp2p.DefaultSecurity,
-		libp2p.Security(secio.ID, secio.New),
 		libp2p.Transport(func(upgrader *tptu.Upgrader) *tcp.TcpTransport {
 			return &tcp.TcpTransport{Upgrader: upgrader, ConnectTimeout: cfg.ConnectTimeout}
 		}),
 		libp2p.Muxer("/yamux/2.0.0", yamux.DefaultTransport),
 		libp2p.ConnectionManager(connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)),
 	}
+
 	if !cfg.SecureIO {
 		opts = append(opts, libp2p.NoSecurity)
+	} else {
+		opts = append(opts, libp2p.Security(secio.ID, secio.New))
 	}
 
 	// relay option
@@ -352,20 +378,21 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		return nil, err
 	}
 	myHost := Host{
-		host:             host,
-		cfg:              cfg,
-		topics:           make(map[string]bool),
-		kad:              kad,
-		kadKey:           cid,
-		newPubSub:        newPubSub,
-		pubs:             make(map[string]*pubsub.Topic),
-		blacklists:       make(map[string]*LRUBlacklist),
-		subs:             make(map[string]*pubsub.Subscription),
-		close:            make(chan interface{}),
-		ctx:              ctx,
-		peersLimiters:    limiters,
-		unicastLimiter:   rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
-		unicastBlocklist: NewCountBlocklist(cfg.BlockListLRUSize, cfg.BlockListErrorThreshold, cfg.BlockListCleanupInterval),
+		host:           host,
+		cfg:            cfg,
+		topics:         make(map[string]bool),
+		kad:            kad,
+		kadKey:         cid,
+		newPubSub:      newPubSub,
+		pubs:           make(map[string]*pubsub.Topic),
+		blacklists:     make(map[string]*LRUBlacklist),
+		subs:           make(map[string]*pubsub.Subscription),
+		close:          make(chan interface{}),
+		ctx:            ctx,
+		peersLimiters:  limiters,
+		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
+		peerManager: newPeerManager(host, discovery.NewRoutingDiscovery(kad), cfg.GroupID,
+			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
 	}
 
 	addrs := make([]string, 0)
@@ -380,9 +407,22 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 }
 
 // JoinOverlay triggers the host to join the DHT overlay
-func (h *Host) JoinOverlay(ctx context.Context) {
-	routingDiscovery := discovery.NewRoutingDiscovery(h.kad)
-	discovery.Advertise(ctx, routingDiscovery, h.kadKey.String())
+func (h *Host) JoinOverlay() {
+	h.peerManager.JoinOverlay()
+}
+
+// Advertise publish the groupID of host to the dht network
+func (h *Host) Advertise() error {
+	return h.peerManager.Advertise()
+}
+
+// FindPeers connect host to the peers with the same groupID
+func (h *Host) FindPeers(ctx context.Context) error {
+	if err := h.peerManager.ConnectPeers(ctx); err != nil {
+		Logger().Error("error when finding peers", zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 // AddUnicastPubSub adds a unicast topic that the host will pay attention to
@@ -391,11 +431,6 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 		return nil
 	}
 	h.host.SetStreamHandler(protocol.ID(topic), func(stream core.Stream) {
-		defer func() {
-			if err := stream.Close(); err != nil {
-				Logger().Error("Error when closing a unicast stream.", zap.Error(err))
-			}
-		}()
 		if h.cfg.EnableRateLimit && !h.unicastLimiter.Allow() {
 			Logger().Warn("Drop unicast sream due to high traffic volume.")
 			return
@@ -417,8 +452,18 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 			Logger().Error("Error when subscribing a unicast message.", zap.Error(err))
 			return
 		}
-		ctx := context.WithValue(context.Background(), unicastCtxKey{}, stream)
-		if err := callback(ctx, stream, data); err != nil {
+
+		conn := stream.Conn()
+		RemoteAddr := peer.AddrInfo{
+			ID:    conn.RemotePeer(),
+			Addrs: []multiaddr.Multiaddr{conn.RemoteMultiaddr()},
+		}
+
+		if err := stream.Close(); err != nil {
+			stream.Reset()
+		}
+
+		if err := callback(context.Background(), RemoteAddr, data); err != nil {
 			Logger().Error("Error when processing a unicast message.", zap.Error(err))
 		}
 	})
@@ -542,14 +587,9 @@ func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
 
 // Unicast sends a message to a peer on the given address
 func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic string, data []byte) error {
-	now := time.Now()
-	if h.unicastBlocklist.Blocked(target.ID, now) {
-		return errors.New("peer is in blocklist at this moment")
-	}
-
 	if err := h.unicast(ctx, target, topic, data); err != nil {
 		Logger().Error("Error when sending a unicast message.", zap.Error(err))
-		h.unicastBlocklist.Add(target.ID, now)
+		h.peerManager.TryBlockPeer(target.ID)
 		return err
 	}
 	return nil
@@ -557,21 +597,39 @@ func (h *Host) Unicast(ctx context.Context, target core.PeerAddrInfo, topic stri
 
 func (h *Host) unicast(ctx context.Context, target core.PeerAddrInfo, topic string, data []byte) error {
 	if err := h.host.Connect(ctx, target); err != nil {
-		return err
+		return errors.Wrap(err, "failed to connect the peer")
 	}
 	stream, err := h.host.NewStream(ctx, target.ID, protocol.ID(topic))
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to build stream with the peer")
 	}
 	if _, err = stream.Write(data); err != nil {
-		return err
+		stream.Reset()
+		return errors.Wrap(err, "failed to write stream")
 	}
 	return stream.Close()
 }
 
 // ClearBlocklist clears the blocklist
 func (h *Host) ClearBlocklist() {
-	h.unicastBlocklist.Clear()
+	h.peerManager.ClearBlockList()
+}
+
+// BlockPeer add the peer into the blocklist
+func (h *Host) BlockPeer(id peer.ID) {
+	h.peerManager.BlockPeer(id)
+}
+
+// AddBootstrap adds bootnode into peermanager
+func (h *Host) AddBootstrap(bootNodeAddrs []multiaddr.Multiaddr) error {
+	for _, node := range bootNodeAddrs {
+		addr, err := peer.AddrInfoFromP2pAddr(node)
+		if err != nil {
+			return err
+		}
+		h.peerManager.AddBootstrap(addr.ID)
+	}
+	return nil
 }
 
 // HostIdentity returns the host identity string
@@ -608,11 +666,16 @@ func (h *Host) Neighbors(ctx context.Context) []core.PeerAddrInfo {
 		}
 		dedup[idStr] = true
 		peer := h.kad.FindLocal(p)
-		if peer.ID != "" && len(peer.Addrs) > 0 && !h.unicastBlocklist.Blocked(peer.ID, time.Now()) {
+		if peer.ID != "" && len(peer.Addrs) > 0 && !h.peerManager.Blocked(peer.ID) {
 			neighbors = append(neighbors, peer)
 		}
 	}
 	return neighbors
+}
+
+// ConnectedPeers returns the connected peers' addrinfo
+func (h *Host) ConnectedPeers() []core.PeerAddrInfo {
+	return h.peerManager.ConnectedPeers()
 }
 
 // Close closes the host
