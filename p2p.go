@@ -20,20 +20,17 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/libp2p/go-libp2p"
-	relay "github.com/libp2p/go-libp2p-circuit"
 	connmgr "github.com/libp2p/go-libp2p-connmgr"
 	core "github.com/libp2p/go-libp2p-core"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/pnet"
 	"github.com/libp2p/go-libp2p-core/protocol"
-	discovery "github.com/libp2p/go-libp2p-discovery"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	secio "github.com/libp2p/go-libp2p-secio"
-	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
-	"github.com/libp2p/go-tcp-transport"
+	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 )
 
 type (
@@ -317,10 +314,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 			return addrs
 		}),
 		libp2p.Identity(prikey),
-		libp2p.DefaultSecurity,
-		libp2p.Transport(func(upgrader *tptu.Upgrader) *tcp.TcpTransport {
-			return &tcp.TcpTransport{Upgrader: upgrader, ConnectTimeout: cfg.ConnectTimeout}
-		}),
+		libp2p.Transport(tcp.NewTCPTransport, tcp.WithConnectionTimeout(cfg.ConnectTimeout)),
 		libp2p.Muxer("/yamux/2.0.0", yamux.DefaultTransport),
 		libp2p.ConnectionManager(connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)),
 	}
@@ -328,12 +322,13 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if !cfg.SecureIO {
 		opts = append(opts, libp2p.NoSecurity)
 	} else {
-		opts = append(opts, libp2p.Security(secio.ID, secio.New))
+		opts = append(opts, libp2p.DefaultSecurity)
 	}
 
 	// relay option
 	if cfg.Relay == "active" {
-		opts = append(opts, libp2p.EnableRelay(relay.OptActive, relay.OptHop))
+		Logger().Panic("v1 relay is deprecated in the latest libp2p")
+		// opts = append(opts, libp2p.EnableRelay(relay.OptActive, relay.OptHop))
 	} else if cfg.Relay == "nat" {
 		opts = append(opts, libp2p.EnableRelay(), libp2p.NATPortMap())
 	} else {
@@ -353,7 +348,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		opts = append(opts, libp2p.PrivateNetwork(p))
 	}
 
-	host, err := libp2p.New(ctx, opts...)
+	host, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +386,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		ctx:            ctx,
 		peersLimiters:  limiters,
 		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
-		peerManager: newPeerManager(host, discovery.NewRoutingDiscovery(kad), cfg.GroupID,
+		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
 	}
 
