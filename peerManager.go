@@ -9,8 +9,9 @@ import (
 
 	"github.com/iotexproject/go-pkgs/cache/ttl"
 	core "github.com/libp2p/go-libp2p-core"
+	discovery "github.com/libp2p/go-libp2p-core/discovery"
 	"github.com/libp2p/go-libp2p-core/peer"
-	discovery "github.com/libp2p/go-libp2p-discovery"
+	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 )
@@ -49,7 +50,7 @@ func withAdvertiseInterval(t time.Duration) peerManagerOpt {
 }
 
 type peerManager struct {
-	routing  *discovery.RoutingDiscovery
+	routing  *routing.RoutingDiscovery
 	host     core.Host
 	ns       string
 	maxPeers int // unlimited peers when maxPeers = 0
@@ -65,7 +66,7 @@ type peerManager struct {
 	once sync.Once
 }
 
-func newPeerManager(host core.Host, routing *discovery.RoutingDiscovery, ns string, opts ...peerManagerOpt) *peerManager {
+func newPeerManager(host core.Host, routing *routing.RoutingDiscovery, ns string, opts ...peerManagerOpt) *peerManager {
 	rand.Seed(time.Now().UnixNano())
 	pm := &peerManager{
 		host:              host,
