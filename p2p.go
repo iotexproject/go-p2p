@@ -35,7 +35,7 @@ import (
 
 type (
 	// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
-	HandleBroadcast func(ctx context.Context, data []byte) error
+	HandleBroadcast func(context.Context, peer.ID, []byte) error
 
 	// HandleUnicast defines the callback function triggered when a unicast message reaches a host
 	HandleUnicast func(context.Context, peer.AddrInfo, []byte) error
@@ -66,6 +66,10 @@ type (
 		GroupID                  string          `yaml:"groupID"`
 		MaxPeer                  int             `yaml:"maxPeer"`
 		BlacklistTolerance       int             `yaml:"blacklistTolerance"`
+		// BufferSize in go-libp2p-pubsub
+		PeerOutboundQueueSize int `yaml:"peerOutboundQueueSize"`
+		ValidateQueueSize     int `yaml:"validateQueueSize"`
+		SubscribeBufferSize   int `yaml:"subscribeBufferSize"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -104,6 +108,10 @@ var (
 		GroupID:                  "iotex",
 		MaxPeer:                  30,
 		BlacklistTolerance:       3,
+		// TODO: experimental value
+		PeerOutboundQueueSize: 30000,
+		ValidateQueueSize:     30000,
+		SubscribeBufferSize:   10000,
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -480,6 +488,8 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 		h.ctx,
 		h.host,
 		pubsub.WithBlacklist(blacklist),
+		pubsub.WithPeerOutboundQueueSize(h.cfg.PeerOutboundQueueSize),
+		pubsub.WithValidateQueueSize(h.cfg.ValidateQueueSize),
 	)
 	if err != nil {
 		return err
@@ -488,7 +498,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if err != nil {
 		return err
 	}
-	sub, err := top.Subscribe()
+	sub, err := top.Subscribe(pubsub.WithBufferSize(h.cfg.SubscribeBufferSize))
 	if err != nil {
 		return err
 	}
@@ -508,20 +518,13 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 					Logger().Error("Error when subscribing a broadcast message.", zap.Error(err))
 					continue
 				}
-				src := msg.GetFrom()
-				allowed, err := h.allowSource(src)
-				if err != nil {
-					Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
-					continue
+				if h.cfg.EnableRateLimit {
+					err := h.handleRateLimit(topic, msg)
+					if err != nil {
+						continue
+					}
 				}
-				if !allowed {
-					h.blacklists[topic].Add(src)
-					Logger().Warn("Blacklist a peer", zap.Any("id", src))
-					continue
-				}
-				h.blacklists[topic].Remove(src)
-				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
-				if err := callback(bctx, msg.Data); err != nil {
+				if err := callback(ctx, msg.GetFrom(), msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
 				}
 			}
@@ -540,6 +543,22 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 			}
 		}
 	}()
+	return nil
+}
+
+func (h *Host) handleRateLimit(topic string, msg *pubsub.Message) error {
+	src := msg.GetFrom()
+	allowed, err := h.allowSource(src)
+	if err != nil {
+		Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
+		return err
+	}
+	if !allowed {
+		h.blacklists[topic].Add(src)
+		Logger().Warn("Blacklist a peer", zap.Any("id", src))
+		return err
+	}
+	h.blacklists[topic].Remove(src)
 	return nil
 }
 
