@@ -411,18 +411,14 @@ func (h *Host) JoinOverlay() {
 	h.peerManager.JoinOverlay()
 }
 
-// Advertise publish the groupID of host to the dht network
-func (h *Host) Advertise() error {
+// AdvertiseAsync publish the groupID of host to the dht network
+func (h *Host) AdvertiseAsync() error {
 	return h.peerManager.Advertise()
 }
 
-// FindPeers connect host to the peers with the same groupID
-func (h *Host) FindPeers(ctx context.Context) error {
-	if err := h.peerManager.ConnectPeers(ctx); err != nil {
-		Logger().Error("error when finding peers", zap.Error(err))
-		return err
-	}
-	return nil
+// FindPeersAsync connect host to the peers with the same groupID
+func (h *Host) FindPeersAsync() {
+	h.peerManager.ConnectPeers()
 }
 
 // AddUnicastPubSub adds a unicast topic that the host will pay attention to

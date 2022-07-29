@@ -57,6 +57,7 @@ type peerManager struct {
 	bootstrap      map[core.PeerID]bool
 	blacklist      *ttl.Cache
 	advertiseQueue chan string
+	findPeersQueue chan int
 
 	blacklistTolerance int
 	blacklistTimeout   time.Duration
@@ -89,7 +90,7 @@ func newPeerManager(host core.Host, routing *discovery.RoutingDiscovery, ns stri
 
 func (pm *peerManager) JoinOverlay() {
 	pm.once.Do(func() {
-		pm.advertiseQueue = make(chan string)
+		pm.advertiseQueue = make(chan string, 1)
 		ticker := time.NewTicker(pm.advertiseInterval)
 		go func(pm *peerManager) {
 			for {
@@ -104,6 +105,15 @@ func (pm *peerManager) JoinOverlay() {
 					if err != nil {
 						Logger().Error("error when advertising.", zap.Error(err))
 					}
+				}
+			}
+		}(pm)
+
+		pm.findPeersQueue = make(chan int, 1)
+		go func(pm *peerManager) {
+			for limit := range pm.findPeersQueue {
+				if err := pm.connectPeers(context.Background(), limit); err != nil {
+					Logger().Error("error when finding peers", zap.Error(err))
 				}
 			}
 		}(pm)
@@ -124,11 +134,14 @@ func (pm *peerManager) AddBootstrap(ids ...core.PeerID) {
 	}
 }
 
-func (pm *peerManager) ConnectPeers(ctx context.Context) error {
-	return pm.connectPeers(ctx)
+func (pm *peerManager) ConnectPeers() {
+	select {
+	case pm.findPeersQueue <- pm.peerLimit():
+	default:
+	}
 }
 
-func (pm *peerManager) connectPeers(ctx context.Context) error {
+func (pm *peerManager) connectPeers(ctx context.Context, limit int) error {
 	// skip connecting when 80% peers are connected
 	if len(pm.host.Network().Conns()) >= pm.threshold() {
 		return nil
@@ -136,7 +149,6 @@ func (pm *peerManager) connectPeers(ctx context.Context) error {
 	if pm.routing == nil {
 		panic(errNoDiscoverer)
 	}
-	limit := pm.peerLimit()
 	for retries := 0; retries < _connectRetry; retries++ {
 		reachLimit, err := pm.findPeers(ctx, limit)
 		if err != nil {
@@ -151,7 +163,7 @@ func (pm *peerManager) connectPeers(ctx context.Context) error {
 			break
 		}
 		// try to find peers by increasing peerlimit in the next round
-		limit += pm.peerLimit()
+		limit += limit
 	}
 	return errNoPeers
 }
@@ -219,9 +231,6 @@ func (pm *peerManager) blocked(pr peer.ID) bool {
 }
 
 func (pm *peerManager) ConnectedPeers() []peer.AddrInfo {
-	if !pm.hasPeers() {
-		pm.connectPeers(context.Background())
-	}
 	ret := make([]core.PeerAddrInfo, 0)
 	conns := pm.host.Network().Conns()
 	// There might be multiple connections for one peerID,
