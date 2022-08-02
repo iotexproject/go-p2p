@@ -124,7 +124,10 @@ func (pm *peerManager) Advertise() error {
 	if pm.advertiseQueue == nil {
 		return errors.New("the host doesn't join the overlay")
 	}
-	pm.advertiseQueue <- pm.ns
+	select {
+	case pm.advertiseQueue <- pm.ns:
+	default:
+	}
 	return nil
 }
 
@@ -134,11 +137,15 @@ func (pm *peerManager) AddBootstrap(ids ...core.PeerID) {
 	}
 }
 
-func (pm *peerManager) ConnectPeers() {
+func (pm *peerManager) ConnectPeers() error {
+	if pm.findPeersQueue == nil {
+		return errors.New("the host doesn't join the overlay")
+	}
 	select {
 	case pm.findPeersQueue <- pm.peerLimit():
 	default:
 	}
+	return nil
 }
 
 func (pm *peerManager) connectPeers(ctx context.Context, limit int) error {

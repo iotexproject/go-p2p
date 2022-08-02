@@ -417,8 +417,8 @@ func (h *Host) AdvertiseAsync() error {
 }
 
 // FindPeersAsync connect host to the peers with the same groupID
-func (h *Host) FindPeersAsync() {
-	h.peerManager.ConnectPeers()
+func (h *Host) FindPeersAsync() error {
+	return h.peerManager.ConnectPeers()
 }
 
 // AddUnicastPubSub adds a unicast topic that the host will pay attention to
