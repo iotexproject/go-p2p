@@ -144,7 +144,7 @@ func main() {
 			p2p.Logger().Panic("Error when connecting to the bootstrap node", zap.Error(err))
 		}
 		host.JoinOverlay()
-		host.Advertise()
+		host.AdvertiseAsync()
 	}
 
 	tick := time.Tick(time.Duration(frequency) * time.Millisecond)
