@@ -158,7 +158,7 @@ func TestPeerManager(t *testing.T) {
 	for _, host := range hosts {
 		host.JoinOverlay()
 		require.NoError(host.AdvertiseAsync())
-		host.FindPeersAsync()
+		require.NoError(host.FindPeersAsync())
 	}
 
 	err = waitUntil(100*time.Millisecond, 3*time.Second, func() bool {
@@ -224,9 +224,8 @@ func TestAddBootNode(t *testing.T) {
 
 	for _, host := range hosts {
 		host.JoinOverlay()
-		err := host.AdvertiseAsync()
-		require.NoError(err)
-		host.FindPeersAsync()
+		require.NoError(host.AdvertiseAsync())
+		require.NoError(host.FindPeersAsync())
 
 		bAddr, err := peer.AddrInfoToP2pAddrs(&bootstrapInfo)
 		require.NoError(err)
@@ -264,7 +263,7 @@ func TestBlacklist(t *testing.T) {
 
 	for _, host := range hosts {
 		host.JoinOverlay()
-		host.AdvertiseAsync()
+		require.NoError(host.AdvertiseAsync())
 	}
 
 	id1 := hosts[1].host.ID()
