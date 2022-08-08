@@ -125,11 +125,14 @@ func main() {
 		receiveCounter.WithLabelValues(id, host.HostIdentity()).Inc()
 		return nil
 	}
-	HandleUnicastMsg := func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
+	HandleBroadcastMsg := func(ctx context.Context, _ peer.ID, data []byte) error {
 		return HandleMsg(ctx, data)
 	}
-	if err := host.AddBroadcastPubSub(ctx, "measurement", HandleMsg); err != nil {
+	if err := host.AddBroadcastPubSub(ctx, "measurement", HandleBroadcastMsg); err != nil {
 		p2p.Logger().Panic("Error when adding broadcast pubsub.", zap.Error(err))
+	}
+	HandleUnicastMsg := func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
+		return HandleMsg(ctx, data)
 	}
 	if err := host.AddUnicastPubSub("measurement", HandleUnicastMsg); err != nil {
 		p2p.Logger().Panic("Error when adding unicast pubsub", zap.Error(err))

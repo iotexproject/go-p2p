@@ -20,25 +20,22 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/libp2p/go-libp2p"
-	relay "github.com/libp2p/go-libp2p-circuit"
 	connmgr "github.com/libp2p/go-libp2p-connmgr"
 	core "github.com/libp2p/go-libp2p-core"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/pnet"
 	"github.com/libp2p/go-libp2p-core/protocol"
-	discovery "github.com/libp2p/go-libp2p-discovery"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	secio "github.com/libp2p/go-libp2p-secio"
-	tptu "github.com/libp2p/go-libp2p-transport-upgrader"
 	yamux "github.com/libp2p/go-libp2p-yamux"
-	"github.com/libp2p/go-tcp-transport"
+	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 )
 
 type (
 	// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
-	HandleBroadcast func(ctx context.Context, data []byte) error
+	HandleBroadcast func(context.Context, peer.ID, []byte) error
 
 	// HandleUnicast defines the callback function triggered when a unicast message reaches a host
 	HandleUnicast func(context.Context, peer.AddrInfo, []byte) error
@@ -69,6 +66,10 @@ type (
 		GroupID                  string          `yaml:"groupID"`
 		MaxPeer                  int             `yaml:"maxPeer"`
 		BlacklistTolerance       int             `yaml:"blacklistTolerance"`
+		// BufferSize in go-libp2p-pubsub
+		PeerOutboundQueueSize int `yaml:"peerOutboundQueueSize"`
+		ValidateQueueSize     int `yaml:"validateQueueSize"`
+		SubscribeBufferSize   int `yaml:"subscribeBufferSize"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -107,6 +108,10 @@ var (
 		GroupID:                  "iotex",
 		MaxPeer:                  30,
 		BlacklistTolerance:       3,
+		// TODO: experimental value
+		PeerOutboundQueueSize: 30000,
+		ValidateQueueSize:     30000,
+		SubscribeBufferSize:   10000,
 	}
 
 	// DefaultRatelimitConfig is the default rate limit config
@@ -317,10 +322,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 			return addrs
 		}),
 		libp2p.Identity(prikey),
-		libp2p.DefaultSecurity,
-		libp2p.Transport(func(upgrader *tptu.Upgrader) *tcp.TcpTransport {
-			return &tcp.TcpTransport{Upgrader: upgrader, ConnectTimeout: cfg.ConnectTimeout}
-		}),
+		libp2p.Transport(tcp.NewTCPTransport, tcp.WithConnectionTimeout(cfg.ConnectTimeout)),
 		libp2p.Muxer("/yamux/2.0.0", yamux.DefaultTransport),
 		libp2p.ConnectionManager(connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)),
 	}
@@ -328,12 +330,13 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if !cfg.SecureIO {
 		opts = append(opts, libp2p.NoSecurity)
 	} else {
-		opts = append(opts, libp2p.Security(secio.ID, secio.New))
+		opts = append(opts, libp2p.DefaultSecurity)
 	}
 
 	// relay option
 	if cfg.Relay == "active" {
-		opts = append(opts, libp2p.EnableRelay(relay.OptActive, relay.OptHop))
+		Logger().Panic("v1 relay is deprecated in the latest libp2p")
+		// opts = append(opts, libp2p.EnableRelay(relay.OptActive, relay.OptHop))
 	} else if cfg.Relay == "nat" {
 		opts = append(opts, libp2p.EnableRelay(), libp2p.NATPortMap())
 	} else {
@@ -353,7 +356,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		opts = append(opts, libp2p.PrivateNetwork(p))
 	}
 
-	host, err := libp2p.New(ctx, opts...)
+	host, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +394,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		ctx:            ctx,
 		peersLimiters:  limiters,
 		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
-		peerManager: newPeerManager(host, discovery.NewRoutingDiscovery(kad), cfg.GroupID,
+		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
 	}
 
@@ -481,6 +484,8 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 		h.ctx,
 		h.host,
 		pubsub.WithBlacklist(blacklist),
+		pubsub.WithPeerOutboundQueueSize(h.cfg.PeerOutboundQueueSize),
+		pubsub.WithValidateQueueSize(h.cfg.ValidateQueueSize),
 	)
 	if err != nil {
 		return err
@@ -489,7 +494,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if err != nil {
 		return err
 	}
-	sub, err := top.Subscribe()
+	sub, err := top.Subscribe(pubsub.WithBufferSize(h.cfg.SubscribeBufferSize))
 	if err != nil {
 		return err
 	}
@@ -509,20 +514,13 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 					Logger().Error("Error when subscribing a broadcast message.", zap.Error(err))
 					continue
 				}
-				src := msg.GetFrom()
-				allowed, err := h.allowSource(src)
-				if err != nil {
-					Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
-					continue
+				if h.cfg.EnableRateLimit {
+					err := h.handleRateLimit(topic, msg)
+					if err != nil {
+						continue
+					}
 				}
-				if !allowed {
-					h.blacklists[topic].Add(src)
-					Logger().Warn("Blacklist a peer", zap.Any("id", src))
-					continue
-				}
-				h.blacklists[topic].Remove(src)
-				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
-				if err := callback(bctx, msg.Data); err != nil {
+				if err := callback(ctx, msg.GetFrom(), msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
 				}
 			}
@@ -541,6 +539,22 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 			}
 		}
 	}()
+	return nil
+}
+
+func (h *Host) handleRateLimit(topic string, msg *pubsub.Message) error {
+	src := msg.GetFrom()
+	allowed, err := h.allowSource(src)
+	if err != nil {
+		Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
+		return err
+	}
+	if !allowed {
+		h.blacklists[topic].Add(src)
+		Logger().Warn("Blacklist a peer", zap.Any("id", src))
+		return err
+	}
+	h.blacklists[topic].Remove(src)
 	return nil
 }
 
