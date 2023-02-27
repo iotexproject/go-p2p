@@ -17,6 +17,7 @@ import (
 	"github.com/multiformats/go-multihash"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/time/rate"
 
 	"github.com/libp2p/go-libp2p"
@@ -258,6 +259,7 @@ type Host struct {
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
 	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
+	pubsub         *pubsub.PubSub
 	pubs           map[string]*pubsub.Topic
 	blacklists     map[string]*LRUBlacklist
 	subs           map[string]*pubsub.Subscription
@@ -477,15 +479,18 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if err != nil {
 		return err
 	}
-	pub, err := h.newPubSub(
-		h.ctx,
-		h.host,
-		pubsub.WithBlacklist(blacklist),
-	)
-	if err != nil {
-		return err
+	if h.pubsub == nil {
+		h.pubsub, err = h.newPubSub(
+			h.ctx,
+			h.host,
+			pubsub.WithBlacklist(blacklist),
+		)
+		if err != nil {
+			return err
+		}
 	}
-	top, err := pub.Join(topic)
+
+	top, err := h.pubsub.Join(topic)
 	if err != nil {
 		return err
 	}
@@ -672,6 +677,23 @@ func (h *Host) Neighbors(ctx context.Context) []core.PeerAddrInfo {
 // ConnectedPeers returns the connected peers' addrinfo
 func (h *Host) ConnectedPeers() []core.PeerAddrInfo {
 	return h.peerManager.ConnectedPeers()
+}
+
+// ConnectedPeersByBroadcastTopic returns the connected peers' addrinfo subscribed topic
+func (h *Host) ConnectedPeersByBroadcastTopic(topic string) []core.PeerAddrInfo {
+	var peers []core.PeerAddrInfo
+	if h.pubsub == nil {
+		return nil
+	}
+	topicPeerIDs := h.pubsub.ListPeers(topic)
+	for _, p := range h.peerManager.ConnectedPeers() {
+		if slices.ContainsFunc(topicPeerIDs, func(e peer.ID) bool {
+			return e == p.ID
+		}) {
+			peers = append(peers, p)
+		}
+	}
+	return peers
 }
 
 // Close closes the host
