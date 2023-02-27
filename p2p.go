@@ -679,7 +679,7 @@ func (h *Host) ConnectedPeers() []core.PeerAddrInfo {
 	return h.peerManager.ConnectedPeers()
 }
 
-// ConnectedPeersByBroadcastTopic returns the connected peers' addrinfo subscribed topic
+// ConnectedPeersByBroadcastTopic returns the connected peers' addrinfo that have subscribed the topic
 func (h *Host) ConnectedPeersByBroadcastTopic(topic string) []core.PeerAddrInfo {
 	var peers []core.PeerAddrInfo
 	if h.pubsub == nil {
