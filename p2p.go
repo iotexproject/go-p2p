@@ -117,6 +117,9 @@ var (
 		PeerAvg:            300,
 		PeerBurst:          500,
 	}
+
+	// ErrNoPeersToBroadcast is a broadcast error when have no peers
+	ErrNoPeersToBroadcast = fmt.Errorf("no peers to broadcast")
 )
 
 // Option defines the option function to modify the config for a host
@@ -579,11 +582,10 @@ func (h *Host) Connect(ctx context.Context, target core.PeerAddrInfo) error {
 
 // Broadcast sends a message to the hosts who subscribe the topic
 func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
-	pub, ok := h.pubs[topic]
-	if !ok {
-		return nil
+	if len(h.pubsub.ListPeers(topic)) == 0 {
+		return ErrNoPeersToBroadcast
 	}
-	return pub.Publish(ctx, data)
+	return h.pubsub.Publish(topic, data)
 }
 
 // Unicast sends a message to a peer on the given address
@@ -679,11 +681,11 @@ func (h *Host) ConnectedPeers() []core.PeerAddrInfo {
 	return h.peerManager.ConnectedPeers()
 }
 
-// ConnectedPeersByBroadcastTopic returns the connected peers' addrinfo that have subscribed the topic
-func (h *Host) ConnectedPeersByBroadcastTopic(topic string) []core.PeerAddrInfo {
+// ConnectedPeersByTopic returns the connected peers' addrinfo that have subscribed the topic
+func (h *Host) ConnectedPeersByTopic(topic string) []core.PeerAddrInfo {
 	var peers []core.PeerAddrInfo
 	if h.pubsub == nil {
-		return nil
+		return peers
 	}
 	topicPeerIDs := h.pubsub.ListPeers(topic)
 	for _, p := range h.peerManager.ConnectedPeers() {
