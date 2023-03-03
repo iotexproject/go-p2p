@@ -619,7 +619,7 @@ func TestBroadcastMultipleTopic(t *testing.T) {
 	t.Run("broadcastUnsubscribedTopicWithNoPeers", func(t *testing.T) {
 		resetCount()
 		err := hosts[3].Broadcast(ctx, "unknown", []byte(""))
-		require.True(errors.Is(err, ErrNoPeersToBroadcast))
+		require.True(errors.Is(err, ErrNoConnectedPeers))
 	})
 }
 

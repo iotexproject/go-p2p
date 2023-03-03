@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -118,8 +119,8 @@ var (
 		PeerBurst:          500,
 	}
 
-	// ErrNoPeersToBroadcast is a broadcast error when have no peers
-	ErrNoPeersToBroadcast = fmt.Errorf("no peers to broadcast")
+	// ErrNoConnectedPeers is a broadcast error when have no peers
+	ErrNoConnectedPeers = fmt.Errorf("no connected peers")
 )
 
 // Option defines the option function to modify the config for a host
@@ -263,7 +264,8 @@ type Host struct {
 	kadKey         cid.Cid
 	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
 	pubsub         *pubsub.PubSub
-	pubs           map[string]*pubsub.Topic
+	pubs           sync.Map
+	mutex          sync.Mutex
 	blacklists     map[string]*LRUBlacklist
 	subs           map[string]*pubsub.Subscription
 	close          chan interface{}
@@ -389,7 +391,6 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		kad:            kad,
 		kadKey:         cid,
 		newPubSub:      newPubSub,
-		pubs:           make(map[string]*pubsub.Topic),
 		blacklists:     make(map[string]*LRUBlacklist),
 		subs:           make(map[string]*pubsub.Subscription),
 		close:          make(chan interface{}),
@@ -475,7 +476,7 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 // AddBroadcastPubSub adds a broadcast topic that the host will pay attention to. This need to be called before using
 // Connect/JoinOverlay. Otherwise, pubsub may not be aware of the existing overlay topology
 func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback HandleBroadcast) error {
-	if _, ok := h.pubs[topic]; ok {
+	if _, ok := h.pubs.Load(topic); ok {
 		return nil
 	}
 	blacklist, err := NewLRUBlacklist(h.cfg.BlockListLRUSize)
@@ -501,7 +502,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if err != nil {
 		return err
 	}
-	h.pubs[topic] = top
+	h.pubs.Store(topic, top)
 	h.blacklists[topic] = blacklist
 	h.subs[topic] = sub
 	go func() {
@@ -581,11 +582,25 @@ func (h *Host) Connect(ctx context.Context, target core.PeerAddrInfo) error {
 }
 
 // Broadcast sends a message to the hosts who subscribe the topic
+// it returns ErrNoConnectedPeers if no connected peers who subscribe the topic when send a unsubscribed topic
 func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
-	if len(h.pubsub.ListPeers(topic)) == 0 {
-		return ErrNoPeersToBroadcast
+	var (
+		pub *pubsub.Topic
+		err error
+	)
+	pubVal, ok := h.pubs.Load(topic)
+	if !ok {
+		if pub, err = h.addPub(topic); err != nil {
+			return err
+		}
+	} else {
+		pub = pubVal.(*pubsub.Topic)
 	}
-	return h.pubsub.Publish(topic, data)
+	// fan-out with no connected peers will return ErrNoConnectedPeers
+	if h.subs[topic] == nil && len(pub.ListPeers()) == 0 {
+		return ErrNoConnectedPeers
+	}
+	return pub.Publish(ctx, data)
 }
 
 // Unicast sends a message to a peer on the given address
@@ -729,6 +744,22 @@ func (h *Host) allowSource(src core.PeerID) (bool, error) {
 		h.peersLimiters.Add(src, limiter)
 	}
 	return limiter.Allow(), nil
+}
+
+func (h *Host) addPub(topic string) (*pubsub.Topic, error) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	pub, ok := h.pubs.Load(topic)
+	if ok {
+		return pub.(*pubsub.Topic), nil
+	}
+	t, err := h.pubsub.Join(topic)
+	if err != nil {
+		return nil, err
+	}
+	h.pubs.Store(topic, t)
+	return t, nil
 }
 
 // generateKeyPair generates the public key and private key by network address
