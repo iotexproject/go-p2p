@@ -258,6 +258,7 @@ type Host struct {
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
 	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
+	pubsub         *pubsub.PubSub
 	pubs           map[string]*pubsub.Topic
 	blacklist      *LRUBlacklist
 	subs           map[string]*pubsub.Subscription
@@ -381,6 +382,10 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist))
+	if err != nil {
+		return nil, err
+	}
 	myHost := Host{
 		host:           host,
 		cfg:            cfg,
@@ -388,6 +393,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		kad:            kad,
 		kadKey:         cid,
 		newPubSub:      newPubSub,
+		pubsub:         ps,
 		pubs:           make(map[string]*pubsub.Topic),
 		blacklist:      blacklist,
 		subs:           make(map[string]*pubsub.Subscription),
@@ -477,15 +483,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if _, ok := h.pubs[topic]; ok {
 		return nil
 	}
-	pub, err := h.newPubSub(
-		h.ctx,
-		h.host,
-		pubsub.WithBlacklist(h.blacklist),
-	)
-	if err != nil {
-		return err
-	}
-	top, err := pub.Join(topic)
+	top, err := h.pubsub.Join(topic)
 	if err != nil {
 		return err
 	}
