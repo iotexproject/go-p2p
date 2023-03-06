@@ -259,7 +259,7 @@ type Host struct {
 	kadKey         cid.Cid
 	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
 	pubs           map[string]*pubsub.Topic
-	blacklists     map[string]*LRUBlacklist
+	blacklist      *LRUBlacklist
 	subs           map[string]*pubsub.Subscription
 	close          chan interface{}
 	ctx            context.Context
@@ -377,6 +377,10 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	blacklist, err := NewLRUBlacklist(cfg.BlockListLRUSize)
+	if err != nil {
+		return nil, err
+	}
 	myHost := Host{
 		host:           host,
 		cfg:            cfg,
@@ -385,7 +389,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		kadKey:         cid,
 		newPubSub:      newPubSub,
 		pubs:           make(map[string]*pubsub.Topic),
-		blacklists:     make(map[string]*LRUBlacklist),
+		blacklist:      blacklist,
 		subs:           make(map[string]*pubsub.Subscription),
 		close:          make(chan interface{}),
 		ctx:            ctx,
@@ -473,14 +477,10 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if _, ok := h.pubs[topic]; ok {
 		return nil
 	}
-	blacklist, err := NewLRUBlacklist(h.cfg.BlockListLRUSize)
-	if err != nil {
-		return err
-	}
 	pub, err := h.newPubSub(
 		h.ctx,
 		h.host,
-		pubsub.WithBlacklist(blacklist),
+		pubsub.WithBlacklist(h.blacklist),
 	)
 	if err != nil {
 		return err
@@ -494,7 +494,6 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 		return err
 	}
 	h.pubs[topic] = top
-	h.blacklists[topic] = blacklist
 	h.subs[topic] = sub
 	go func() {
 		for {
@@ -516,11 +515,11 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 					continue
 				}
 				if !allowed {
-					h.blacklists[topic].Add(src)
+					h.blacklist.Add(src)
 					Logger().Warn("Blacklist a peer", zap.Any("id", src))
 					continue
 				}
-				h.blacklists[topic].Remove(src)
+				h.blacklist.Remove(src)
 				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
 				if err := callback(bctx, msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
@@ -537,7 +536,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 				return
 			default:
 				time.Sleep(h.cfg.BlockListCleanupInterval)
-				h.blacklists[topic].RemoveOldest()
+				h.blacklist.RemoveOldest()
 			}
 		}
 	}()
