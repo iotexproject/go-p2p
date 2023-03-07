@@ -257,7 +257,6 @@ type Host struct {
 	topics         map[string]bool
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
-	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
 	pubsub         *pubsub.PubSub
 	pubs           map[string]*pubsub.Topic
 	blacklist      *LRUBlacklist
@@ -392,7 +391,6 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		topics:         make(map[string]bool),
 		kad:            kad,
 		kadKey:         cid,
-		newPubSub:      newPubSub,
 		pubsub:         ps,
 		pubs:           make(map[string]*pubsub.Topic),
 		blacklist:      blacklist,
