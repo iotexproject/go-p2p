@@ -262,11 +262,10 @@ type Host struct {
 	topics         map[string]bool
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
-	newPubSub      func(ctx context.Context, h core.Host, opts ...pubsub.Option) (*pubsub.PubSub, error)
 	pubsub         *pubsub.PubSub
 	pubs           map[string]*pubsub.Topic
 	rwMutex        sync.RWMutex // metex for pubs and blacklists
-	blacklists     map[string]*LRUBlacklist
+	blacklist      *LRUBlacklist
 	subs           map[string]*pubsub.Subscription
 	close          chan interface{}
 	ctx            context.Context
@@ -384,15 +383,23 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	blacklist, err := NewLRUBlacklist(cfg.BlockListLRUSize)
+	if err != nil {
+		return nil, err
+	}
+	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist))
+	if err != nil {
+		return nil, err
+	}
 	myHost := Host{
 		host:           host,
 		cfg:            cfg,
 		topics:         make(map[string]bool),
 		kad:            kad,
 		kadKey:         cid,
-		newPubSub:      newPubSub,
+		pubsub:         ps,
 		pubs:           make(map[string]*pubsub.Topic),
-		blacklists:     make(map[string]*LRUBlacklist),
+		blacklist:      blacklist,
 		subs:           make(map[string]*pubsub.Subscription),
 		close:          make(chan interface{}),
 		ctx:            ctx,
@@ -485,12 +492,9 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if _, ok := h.subs[topic]; ok {
 		return nil
 	}
-	pub, ok := h.getPub(topic)
-	if !ok {
-		pub, err = h.addPub(topic)
-		if err != nil {
-			return err
-		}
+	pub, err := h.getOrAddPub(topic)
+	if err != nil {
+		return err
 	}
 	sub, err := pub.Subscribe()
 	if err != nil {
@@ -517,11 +521,11 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 					continue
 				}
 				if !allowed {
-					h.getBlacklist(topic).Add(src)
+					h.blacklist.Add(src)
 					Logger().Warn("Blacklist a peer", zap.Any("id", src))
 					continue
 				}
-				h.getBlacklist(topic).Remove(src)
+				h.blacklist.Remove(src)
 				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
 				if err := callback(bctx, msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
@@ -538,7 +542,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 				return
 			default:
 				time.Sleep(h.cfg.BlockListCleanupInterval)
-				h.getBlacklist(topic).RemoveOldest()
+				h.blacklist.RemoveOldest()
 			}
 		}
 	}()
@@ -580,14 +584,11 @@ func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
 		pub *pubsub.Topic
 		err error
 	)
-	pub, ok := h.getPub(topic)
-	if !ok {
-		// fan-out: publish unsubscribed topic
-		if pub, err = h.addPub(topic); err != nil {
-			return err
-		}
+	pub, err = h.getOrAddPub(topic)
+	if err != nil {
+		return err
 	}
-	// publish unsubscribed topic with no connected peers can not send the message, it should return ErrNoConnectedPeers
+	// publishing unsubscribed topic will fail when no connected peers, it should return error
 	if h.subs[topic] == nil && len(pub.ListPeers()) == 0 {
 		return ErrNoConnectedPeers
 	}
@@ -734,6 +735,14 @@ func (h *Host) allowSource(src core.PeerID) (bool, error) {
 	return limiter.Allow(), nil
 }
 
+func (h *Host) getOrAddPub(topic string) (*pubsub.Topic, error) {
+	pub, ok := h.getPub(topic)
+	if ok {
+		return pub, nil
+	}
+	return h.addPub(topic)
+}
+
 func (h *Host) getPub(topic string) (pub *pubsub.Topic, ok bool) {
 	h.rwMutex.RLock()
 	defer h.rwMutex.RUnlock()
@@ -746,33 +755,16 @@ func (h *Host) addPub(topic string) (*pubsub.Topic, error) {
 	h.rwMutex.Lock()
 	defer h.rwMutex.Unlock()
 
-	blacklist, err := NewLRUBlacklist(h.cfg.BlockListLRUSize)
+	pub, ok := h.pubs[topic]
+	if ok {
+		return pub, nil
+	}
+	pub, err := h.pubsub.Join(topic)
 	if err != nil {
 		return nil, err
 	}
-	pubsub, err := h.newPubSub(
-		h.ctx,
-		h.host,
-		pubsub.WithBlacklist(blacklist),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	t, err := pubsub.Join(topic)
-	if err != nil {
-		return nil, err
-	}
-	h.pubs[topic] = t
-	h.blacklists[topic] = blacklist
-	return t, nil
-}
-
-func (h *Host) getBlacklist(topic string) *LRUBlacklist {
-	h.rwMutex.RLock()
-	defer h.rwMutex.RUnlock()
-
-	return h.blacklists[topic]
+	h.pubs[topic] = pub
+	return pub, nil
 }
 
 // generateKeyPair generates the public key and private key by network address
