@@ -18,7 +18,6 @@ import (
 	"github.com/multiformats/go-multihash"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/time/rate"
 
 	"github.com/libp2p/go-libp2p"
@@ -262,9 +261,7 @@ type Host struct {
 	topics         map[string]bool
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
-	pubsub         *pubsub.PubSub
-	pubs           map[string]*pubsub.Topic
-	rwMutex        sync.RWMutex // metex for pubs and blacklists
+	pubsubManager  *pubsubManager
 	blacklist      *LRUBlacklist
 	subs           map[string]*pubsub.Subscription
 	close          chan interface{}
@@ -272,6 +269,12 @@ type Host struct {
 	peersLimiters  *lru.Cache
 	unicastLimiter *rate.Limiter
 	peerManager    *peerManager
+}
+
+type pubsubManager struct {
+	pubsub *pubsub.PubSub
+	pubs   map[string]*pubsub.Topic
+	mutex  sync.RWMutex // metex for pubs
 }
 
 // NewHost constructs a host struct
@@ -392,13 +395,15 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		return nil, err
 	}
 	myHost := Host{
-		host:           host,
-		cfg:            cfg,
-		topics:         make(map[string]bool),
-		kad:            kad,
-		kadKey:         cid,
-		pubsub:         ps,
-		pubs:           make(map[string]*pubsub.Topic),
+		host:   host,
+		cfg:    cfg,
+		topics: make(map[string]bool),
+		kad:    kad,
+		kadKey: cid,
+		pubsubManager: &pubsubManager{
+			pubsub: ps,
+			pubs:   make(map[string]*pubsub.Topic),
+		},
 		blacklist:      blacklist,
 		subs:           make(map[string]*pubsub.Subscription),
 		close:          make(chan interface{}),
@@ -412,10 +417,6 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	addrs := make([]string, 0)
 	for _, ma := range myHost.Addresses() {
 		addrs = append(addrs, ma.String())
-	}
-	myHost.pubsub, err = newPubSub(ctx, host)
-	if err != nil {
-		return nil, err
 	}
 	Logger().Info("P2p host started.",
 		zap.Strings("address", addrs),
@@ -492,7 +493,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 	if _, ok := h.subs[topic]; ok {
 		return nil
 	}
-	pub, err := h.getOrAddPub(topic)
+	pub, err := h.pubsubManager.getOrAddPub(topic)
 	if err != nil {
 		return err
 	}
@@ -584,7 +585,7 @@ func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
 		pub *pubsub.Topic
 		err error
 	)
-	pub, err = h.getOrAddPub(topic)
+	pub, err = h.pubsubManager.getOrAddPub(topic)
 	if err != nil {
 		return err
 	}
@@ -690,12 +691,15 @@ func (h *Host) ConnectedPeers() []core.PeerAddrInfo {
 
 // ConnectedPeersByTopic returns the connected peers' addrinfo that have subscribed the topic
 func (h *Host) ConnectedPeersByTopic(topic string) []core.PeerAddrInfo {
-	topicPeerIDs := h.pubsub.ListPeers(topic)
-	peers := make([]core.PeerAddrInfo, 0, len(topicPeerIDs))
+	peerIDs := h.pubsubManager.listPeers(topic)
+	peers := make([]core.PeerAddrInfo, 0, len(peerIDs))
+	peerMap := make(map[peer.ID]bool)
+	for _, peerID := range peerIDs {
+		peerMap[peerID] = true
+	}
+
 	for _, p := range h.peerManager.ConnectedPeers() {
-		if slices.ContainsFunc(topicPeerIDs, func(e peer.ID) bool {
-			return e == p.ID
-		}) {
+		if peerMap[p.ID] {
 			peers = append(peers, p)
 		}
 	}
@@ -735,7 +739,7 @@ func (h *Host) allowSource(src core.PeerID) (bool, error) {
 	return limiter.Allow(), nil
 }
 
-func (h *Host) getOrAddPub(topic string) (*pubsub.Topic, error) {
+func (h *pubsubManager) getOrAddPub(topic string) (*pubsub.Topic, error) {
 	pub, ok := h.getPub(topic)
 	if ok {
 		return pub, nil
@@ -743,17 +747,21 @@ func (h *Host) getOrAddPub(topic string) (*pubsub.Topic, error) {
 	return h.addPub(topic)
 }
 
-func (h *Host) getPub(topic string) (pub *pubsub.Topic, ok bool) {
-	h.rwMutex.RLock()
-	defer h.rwMutex.RUnlock()
+func (h *pubsubManager) listPeers(topic string) []peer.ID {
+	return h.pubsub.ListPeers(topic)
+}
+
+func (h *pubsubManager) getPub(topic string) (pub *pubsub.Topic, ok bool) {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
 
 	pub, ok = h.pubs[topic]
 	return
 }
 
-func (h *Host) addPub(topic string) (*pubsub.Topic, error) {
-	h.rwMutex.Lock()
-	defer h.rwMutex.Unlock()
+func (h *pubsubManager) addPub(topic string) (*pubsub.Topic, error) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
 
 	pub, ok := h.pubs[topic]
 	if ok {
