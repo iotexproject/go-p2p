@@ -263,7 +263,6 @@ type Host struct {
 	kadKey         cid.Cid
 	pubsubManager  *pubsubManager
 	blacklist      *LRUBlacklist
-	subs           map[string]*pubsub.Subscription
 	close          chan interface{}
 	ctx            context.Context
 	peersLimiters  *lru.Cache
@@ -274,7 +273,8 @@ type Host struct {
 type pubsubManager struct {
 	pubsub *pubsub.PubSub
 	pubs   map[string]*pubsub.Topic
-	mutex  sync.RWMutex // metex for pubs
+	subs   map[string]*pubsub.Subscription
+	mutex  sync.RWMutex
 }
 
 // NewHost constructs a host struct
@@ -403,9 +403,9 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		pubsubManager: &pubsubManager{
 			pubsub: ps,
 			pubs:   make(map[string]*pubsub.Topic),
+			subs:   make(map[string]*pubsub.Subscription),
 		},
 		blacklist:      blacklist,
-		subs:           make(map[string]*pubsub.Subscription),
 		close:          make(chan interface{}),
 		ctx:            ctx,
 		peersLimiters:  limiters,
@@ -490,18 +490,17 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 // Connect/JoinOverlay. Otherwise, pubsub may not be aware of the existing overlay topology
 func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback HandleBroadcast) error {
 	var err error
-	if _, ok := h.subs[topic]; ok {
+	if _, ok := h.pubsubManager.getSub(topic); ok {
 		return nil
 	}
 	pub, err := h.pubsubManager.getOrAddPub(topic)
 	if err != nil {
 		return err
 	}
-	sub, err := pub.Subscribe()
+	sub, err := h.pubsubManager.addSub(pub)
 	if err != nil {
 		return err
 	}
-	h.subs[topic] = sub
 	go func() {
 		for {
 			select {
@@ -590,7 +589,8 @@ func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
 		return err
 	}
 	// publishing unsubscribed topic will fail when no connected peers, it should return error
-	if h.subs[topic] == nil && len(pub.ListPeers()) == 0 {
+	_, subscribed := h.pubsubManager.getSub(topic)
+	if !subscribed && len(pub.ListPeers()) == 0 {
 		return ErrNoConnectedPeers
 	}
 	return pub.Publish(ctx, data)
@@ -708,7 +708,7 @@ func (h *Host) ConnectedPeersByTopic(topic string) []core.PeerAddrInfo {
 
 // Close closes the host
 func (h *Host) Close() error {
-	for _, sub := range h.subs {
+	for _, sub := range h.pubsubManager.subs {
 		sub.Cancel()
 	}
 	if err := h.kad.Close(); err != nil {
@@ -739,16 +739,16 @@ func (h *Host) allowSource(src core.PeerID) (bool, error) {
 	return limiter.Allow(), nil
 }
 
+func (h *pubsubManager) listPeers(topic string) []peer.ID {
+	return h.pubsub.ListPeers(topic)
+}
+
 func (h *pubsubManager) getOrAddPub(topic string) (*pubsub.Topic, error) {
 	pub, ok := h.getPub(topic)
 	if ok {
 		return pub, nil
 	}
 	return h.addPub(topic)
-}
-
-func (h *pubsubManager) listPeers(topic string) []peer.ID {
-	return h.pubsub.ListPeers(topic)
 }
 
 func (h *pubsubManager) getPub(topic string) (pub *pubsub.Topic, ok bool) {
@@ -773,6 +773,30 @@ func (h *pubsubManager) addPub(topic string) (*pubsub.Topic, error) {
 	}
 	h.pubs[topic] = pub
 	return pub, nil
+}
+
+func (h *pubsubManager) getSub(topic string) (sub *pubsub.Subscription, ok bool) {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
+	sub, ok = h.subs[topic]
+	return
+}
+
+func (h *pubsubManager) addSub(pub *pubsub.Topic) (*pubsub.Subscription, error) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	sub, ok := h.subs[pub.String()]
+	if ok {
+		return sub, nil
+	}
+	sub, err := pub.Subscribe()
+	if err != nil {
+		return nil, err
+	}
+	h.subs[pub.String()] = sub
+	return sub, nil
 }
 
 // generateKeyPair generates the public key and private key by network address
