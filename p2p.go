@@ -258,16 +258,16 @@ func WithMaxPeer(num uint32) Option {
 type Host struct {
 	host           core.Host
 	cfg            Config
-	topics         map[string]bool
+	topics         map[string]bool // used for unicast
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
-	pubsubManager  *pubsubManager
-	blacklist      *LRUBlacklist
+	pubsubManager  *pubsubManager // used for broadcast
+	blacklist      *LRUBlacklist  // blacklist for broadcast
 	close          chan interface{}
 	ctx            context.Context
 	peersLimiters  *lru.Cache
 	unicastLimiter *rate.Limiter
-	peerManager    *peerManager
+	peerManager    *peerManager // peers for p2p connections
 }
 
 type pubsubManager struct {
