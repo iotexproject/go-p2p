@@ -601,11 +601,15 @@ func TestBroadcastMultipleTopic(t *testing.T) {
 		resetCount()
 		require.NoError(hosts[3].Broadcast(ctx, "action", []byte("")))
 		require.NoError(waitUntil(100*time.Millisecond, time.Second, func() bool {
+			mutex.Lock()
+			defer mutex.Unlock()
 			return 1 == count[2] && 0 == count[1]
 		}))
 		resetCount()
 		require.NoError(hosts[3].Broadcast(ctx, "block", []byte("")))
 		require.NoError(waitUntil(100*time.Millisecond, time.Second, func() bool {
+			mutex.Lock()
+			defer mutex.Unlock()
 			return 1 == count[2] && 1 == count[1]
 		}))
 	})
@@ -613,6 +617,8 @@ func TestBroadcastMultipleTopic(t *testing.T) {
 		resetCount()
 		require.NoError(hosts[3].Broadcast(ctx, "consensus", []byte("")))
 		require.NoError(waitUntil(100*time.Millisecond, time.Second, func() bool {
+			mutex.Lock()
+			defer mutex.Unlock()
 			return 0 == count[2] && 1 == count[1]
 		}))
 	})
