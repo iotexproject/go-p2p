@@ -547,7 +547,7 @@ func TestConnectedPeersByTopic(t *testing.T) {
 	require.NoError(hosts[3].AddBroadcastPubSub(ctx, "1", callback))
 	require.NoError(hosts[4].AddBroadcastPubSub(ctx, "1", callback))
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	peers := hosts[1].ConnectedPeersByTopic("0")
 	require.Len(peers, 0)
 	peers = hosts[1].ConnectedPeersByTopic("1")
@@ -595,7 +595,7 @@ func TestBroadcastMultipleTopic(t *testing.T) {
 	require.NoError(hosts[3].AddBroadcastPubSub(ctx, "block", callback(3)))
 	require.NoError(hosts[3].AddBroadcastPubSub(ctx, "action", callback(3)))
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	t.Run("broadcastSubscribedTopic", func(t *testing.T) {
 		resetCount()
