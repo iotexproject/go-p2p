@@ -44,7 +44,7 @@ func withBlacklistTimeout(t time.Duration) peerManagerOpt {
 
 func withAdvertiseInterval(t time.Duration) peerManagerOpt {
 	return func(pm *peerManager) {
-		pm.blacklistTimeout = t
+		pm.advertiseInterval = t
 	}
 }
 
