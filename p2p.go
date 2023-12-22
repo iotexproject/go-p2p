@@ -16,6 +16,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
@@ -24,6 +25,7 @@ import (
 	connmgr "github.com/libp2p/go-libp2p-connmgr"
 	core "github.com/libp2p/go-libp2p-core"
 	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/metrics"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/pnet"
 	"github.com/libp2p/go-libp2p-core/protocol"
@@ -117,6 +119,20 @@ var (
 		PeerBurst:          500,
 	}
 )
+
+var (
+	_p2pBandwidthHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "iotex_p2p_bandwidth_histogram",
+			Help: "P2P bandwidth stats",
+		},
+		[]string{"protocol", "type"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(_p2pBandwidthHistogram)
+}
 
 // Option defines the option function to modify the config for a host
 type Option func(cfg *Config) error
@@ -266,6 +282,7 @@ type Host struct {
 	peersLimiters  *lru.Cache
 	unicastLimiter *rate.Limiter
 	peerManager    *peerManager
+	bc             *metrics.BandwidthCounter
 }
 
 // NewHost constructs a host struct
@@ -308,6 +325,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	bc := metrics.NewBandwidthCounter()
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/%s/tcp/%d", ip, cfg.Port)),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
@@ -323,6 +341,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		}),
 		libp2p.Muxer("/yamux/2.0.0", yamux.DefaultTransport),
 		libp2p.ConnectionManager(connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)),
+		libp2p.BandwidthReporter(bc),
 	}
 
 	if !cfg.SecureIO {
@@ -401,6 +420,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
 		peerManager: newPeerManager(host, discovery.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
+		bc: bc,
 	}
 
 	addrs := make([]string, 0)
@@ -411,6 +431,18 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		zap.Strings("address", addrs),
 		zap.Bool("secureIO", myHost.cfg.SecureIO),
 		zap.Bool("gossip", myHost.cfg.Gossip))
+	// start metrics update
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		for {
+			select {
+			case <-ticker.C:
+				myHost.updateMetrics()
+			case <-myHost.close:
+				return
+			}
+		}
+	}()
 	return &myHost, nil
 }
 
@@ -682,6 +714,19 @@ func (h *Host) Close() error {
 	}
 	close(h.close)
 	return nil
+}
+
+func (h *Host) updateMetrics() {
+	if h.bc == nil {
+		return
+	}
+	for p, stats := range h.bc.GetBandwidthByProtocol() {
+		protocol := string(p)
+		_p2pBandwidthHistogram.WithLabelValues(protocol, "in").Observe(float64(stats.TotalIn))
+		_p2pBandwidthHistogram.WithLabelValues(protocol, "out").Observe(float64(stats.TotalOut))
+		_p2pBandwidthHistogram.WithLabelValues(protocol, "rateIn").Observe(float64(stats.RateIn))
+		_p2pBandwidthHistogram.WithLabelValues(protocol, "rateOut").Observe(float64(stats.RateOut))
+	}
 }
 
 func (h *Host) allowSource(src core.PeerID) (bool, error) {
