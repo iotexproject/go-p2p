@@ -9,6 +9,7 @@ import (
 
 	"github.com/iotexproject/go-pkgs/cache/ttl"
 	core "github.com/libp2p/go-libp2p-core"
+	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	discovery "github.com/libp2p/go-libp2p-discovery"
 	"github.com/multiformats/go-multiaddr"
@@ -245,6 +246,9 @@ func (pm *peerManager) ConnectedPeers() []peer.AddrInfo {
 	connSet := make(map[string]bool, len(conns))
 	for _, conn := range conns {
 		remoteID := conn.RemotePeer()
+		if pm.host.Network().Connectedness(remoteID) != network.Connected {
+			continue
+		}
 		if connSet[remoteID.Pretty()] {
 			continue
 		}
