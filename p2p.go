@@ -121,9 +121,9 @@ var (
 )
 
 var (
-	_p2pBandwidthHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name: "iotex_p2p_bandwidth_histogram",
+	_p2pBandwidthGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "iotex_p2p_bandwidth_gauge",
 			Help: "P2P bandwidth stats",
 		},
 		[]string{"protocol", "type"},
@@ -131,7 +131,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(_p2pBandwidthHistogram)
+	prometheus.MustRegister(_p2pBandwidthGauge)
 }
 
 // Option defines the option function to modify the config for a host
@@ -722,10 +722,10 @@ func (h *Host) updateMetrics() {
 	}
 	for p, stats := range h.bc.GetBandwidthByProtocol() {
 		protocol := string(p)
-		_p2pBandwidthHistogram.WithLabelValues(protocol, "in").Observe(float64(stats.TotalIn))
-		_p2pBandwidthHistogram.WithLabelValues(protocol, "out").Observe(float64(stats.TotalOut))
-		_p2pBandwidthHistogram.WithLabelValues(protocol, "rateIn").Observe(float64(stats.RateIn))
-		_p2pBandwidthHistogram.WithLabelValues(protocol, "rateOut").Observe(float64(stats.RateOut))
+		_p2pBandwidthGauge.WithLabelValues(protocol, "in").Set(float64(stats.TotalIn))
+		_p2pBandwidthGauge.WithLabelValues(protocol, "out").Set(float64(stats.TotalOut))
+		_p2pBandwidthGauge.WithLabelValues(protocol, "rateIn").Set(float64(stats.RateIn))
+		_p2pBandwidthGauge.WithLabelValues(protocol, "rateOut").Set(float64(stats.RateOut))
 	}
 }
 
