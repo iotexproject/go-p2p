@@ -128,10 +128,18 @@ var (
 		},
 		[]string{"protocol", "type"},
 	)
+	_p2pGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "iotex_p2p_gauge",
+			Help: "P2P conn stats",
+		},
+		[]string{"type"},
+	)
 )
 
 func init() {
 	prometheus.MustRegister(_p2pBandwidthGauge)
+	prometheus.MustRegister(_p2pGauge)
 }
 
 // Option defines the option function to modify the config for a host
@@ -283,6 +291,7 @@ type Host struct {
 	unicastLimiter *rate.Limiter
 	peerManager    *peerManager
 	bc             *metrics.BandwidthCounter
+	connMgr        *connmgr.BasicConnMgr
 }
 
 // NewHost constructs a host struct
@@ -326,6 +335,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		return nil, err
 	}
 	bc := metrics.NewBandwidthCounter()
+	connMgr := connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/%s/tcp/%d", ip, cfg.Port)),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
@@ -340,7 +350,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 			return &tcp.TcpTransport{Upgrader: upgrader, ConnectTimeout: cfg.ConnectTimeout}
 		}),
 		libp2p.Muxer("/yamux/2.0.0", yamux.DefaultTransport),
-		libp2p.ConnectionManager(connmgr.NewConnManager(cfg.ConnLowWater, cfg.ConnHighWater, cfg.ConnGracePeriod)),
+		libp2p.ConnectionManager(connMgr),
 		libp2p.BandwidthReporter(bc),
 	}
 
@@ -420,7 +430,8 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
 		peerManager: newPeerManager(host, discovery.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
-		bc: bc,
+		bc:      bc,
+		connMgr: connMgr,
 	}
 
 	addrs := make([]string, 0)
@@ -717,16 +728,85 @@ func (h *Host) Close() error {
 }
 
 func (h *Host) updateMetrics() {
-	if h.bc == nil {
-		return
+	if h.bc != nil {
+		for p, stats := range h.bc.GetBandwidthByProtocol() {
+			protocol := string(p)
+			_p2pBandwidthGauge.WithLabelValues(protocol, "in").Set(float64(stats.TotalIn))
+			_p2pBandwidthGauge.WithLabelValues(protocol, "out").Set(float64(stats.TotalOut))
+			_p2pBandwidthGauge.WithLabelValues(protocol, "rateIn").Set(float64(stats.RateIn))
+			_p2pBandwidthGauge.WithLabelValues(protocol, "rateOut").Set(float64(stats.RateOut))
+		}
 	}
-	for p, stats := range h.bc.GetBandwidthByProtocol() {
-		protocol := string(p)
-		_p2pBandwidthGauge.WithLabelValues(protocol, "in").Set(float64(stats.TotalIn))
-		_p2pBandwidthGauge.WithLabelValues(protocol, "out").Set(float64(stats.TotalOut))
-		_p2pBandwidthGauge.WithLabelValues(protocol, "rateIn").Set(float64(stats.RateIn))
-		_p2pBandwidthGauge.WithLabelValues(protocol, "rateOut").Set(float64(stats.RateOut))
+	if h.connMgr != nil {
+		_p2pGauge.WithLabelValues("numConnectedPeers").Set(float64(h.connMgr.GetInfo().ConnCount))
+		_p2pGauge.WithLabelValues("numProtectedPeers").Set(float64(len(h.protectedPeers())))
 	}
+}
+
+func (h *Host) protectedPeers() []peer.ID {
+	if h.connMgr == nil || h.host.Peerstore() == nil {
+		return nil
+	}
+	protectedPeers := make([]peer.ID, 0)
+	for _, p := range h.host.Peerstore().Peers() {
+		tagInfo := h.connMgr.GetTagInfo(p)
+		if tagInfo == nil {
+			continue
+		}
+		protectTags := make([]string, 0)
+		for _, tag := range []string{"kbucket", "pubsub:broadcastbeefdb3001dc858cfe8b"} {
+			if h.connMgr.IsProtected(p, tag) {
+				protectTags = append(protectTags, tag)
+			}
+		}
+		if len(protectTags) > 0 {
+			protectedPeers = append(protectedPeers, p)
+		}
+	}
+	return protectedPeers
+}
+
+func (h *Host) printPeers() {
+	printPeers := func() {
+		if h.connMgr == nil || h.host.Peerstore() == nil {
+			return
+		}
+		Logger().Info("print peer===============================")
+		protectedSize := 0
+		for _, p := range h.host.Peerstore().Peers() {
+			tagInfo := h.connMgr.GetTagInfo(p)
+			if tagInfo == nil {
+				continue
+			}
+			protectTags := make([]string, 0)
+			for _, tag := range []string{"kbucket", "pubsub:broadcastbeefdb3001dc858cfe8b"} {
+				if h.connMgr.IsProtected(p, tag) {
+					protectTags = append(protectTags, tag)
+				}
+			}
+			if len(protectTags) > 0 {
+				protectedSize++
+			}
+			Logger().Info("print peer",
+				zap.String("id", p.Pretty()),
+				zap.Any("tags", tagInfo.Tags),
+				zap.Any("protectTags", protectTags),
+				zap.Int("protectTagSize", len(protectTags)),
+				zap.Any("connsSize", len(tagInfo.Conns)),
+			)
+		}
+		Logger().Info("print peer", zap.Int("protectedSize", protectedSize))
+	}
+	ticker := time.NewTicker(3 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			printPeers()
+		case <-h.close:
+			return
+		}
+	}
+
 }
 
 func (h *Host) allowSource(src core.PeerID) (bool, error) {
