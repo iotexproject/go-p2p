@@ -135,11 +135,19 @@ var (
 		},
 		[]string{"type"},
 	)
+	_p2pPeersGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "iotex_p2p_peers_gauge",
+			Help: "P2P peers stats",
+		},
+		[]string{"peer"},
+	)
 )
 
 func init() {
 	prometheus.MustRegister(_p2pBandwidthGauge)
 	prometheus.MustRegister(_p2pGauge)
+	prometheus.MustRegister(_p2pPeersGauge)
 }
 
 // Option defines the option function to modify the config for a host
@@ -454,6 +462,18 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 			}
 		}
 	}()
+	// start print peers
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		for {
+			select {
+			case <-ticker.C:
+				kad.RoutingTable().Print()
+			case <-myHost.close:
+				return
+			}
+		}
+	}()
 	return &myHost, nil
 }
 
@@ -740,6 +760,9 @@ func (h *Host) updateMetrics() {
 	if h.connMgr != nil {
 		_p2pGauge.WithLabelValues("numConnectedPeers").Set(float64(h.connMgr.GetInfo().ConnCount))
 		_p2pGauge.WithLabelValues("numProtectedPeers").Set(float64(len(h.protectedPeers())))
+	}
+	for _, p := range h.ConnectedPeers() {
+		_p2pPeersGauge.WithLabelValues(p.ID.Pretty()).Set(1)
 	}
 }
 
