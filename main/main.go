@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
 	p2p "github.com/iotexproject/go-p2p"
