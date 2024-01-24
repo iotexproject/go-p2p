@@ -381,7 +381,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist))
+	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist), pubsub.WithMaxMessageSize(12582912))
 	if err != nil {
 		return nil, err
 	}
