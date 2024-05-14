@@ -93,7 +93,7 @@ var (
 		ConnectTimeout:           time.Minute,
 		BlackListTimeout:         10 * time.Minute,
 		MasterKey:                "",
-		Relay:                    "disable",
+		Relay:                    "nat",
 		ConnLowWater:             200,
 		ConnHighWater:            500,
 		RateLimiterLRUSize:       1000,
