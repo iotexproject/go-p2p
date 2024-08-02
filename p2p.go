@@ -69,6 +69,7 @@ type (
 		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
 		GroupID                  string          `yaml:"groupID"`
 		MaxPeer                  int             `yaml:"maxPeer"`
+		MaxMessageSize           int             `yaml:"maxMessageSize"`
 		BlacklistTolerance       int             `yaml:"blacklistTolerance"`
 	}
 
@@ -107,6 +108,7 @@ var (
 		ProtocolID:               "/iotex",
 		GroupID:                  "iotex",
 		MaxPeer:                  30,
+		MaxMessageSize:           12582912, // 12MB
 		BlacklistTolerance:       3,
 	}
 
@@ -254,6 +256,14 @@ func WithMaxPeer(num uint32) Option {
 	}
 }
 
+// WithMaxMessageSize config MaxMessageSize option.
+func WithMaxMessageSize(size int) Option {
+	return func(cfg *Config) error {
+		cfg.MaxMessageSize = size
+		return nil
+	}
+}
+
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
 	host           core.Host
@@ -390,7 +400,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist))
+	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist), pubsub.WithMaxMessageSize(cfg.MaxMessageSize))
 	if err != nil {
 		return nil, err
 	}
