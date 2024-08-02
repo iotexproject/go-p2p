@@ -718,6 +718,7 @@ func (h *Host) ConnectedPeersByTopic(topic string) []core.PeerAddrInfo {
 
 // Close closes the host
 func (h *Host) Close() error {
+	close(h.close)
 	for _, sub := range h.pubsubManager.subs {
 		sub.Cancel()
 	}
@@ -727,7 +728,6 @@ func (h *Host) Close() error {
 	if err := h.host.Close(); err != nil {
 		return err
 	}
-	close(h.close)
 	return nil
 }
 
