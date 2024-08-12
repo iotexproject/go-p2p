@@ -345,8 +345,6 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 
 	if !cfg.SecureIO {
 		opts = append(opts, libp2p.NoSecurity)
-	} else {
-		// opts = append(opts, libp2p.Security(secio.ID, secio.New))
 	}
 
 	// relay option
