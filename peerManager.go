@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/iotexproject/go-pkgs/cache/ttl"
-	core "github.com/libp2p/go-libp2p-core"
-	"github.com/libp2p/go-libp2p-core/peer"
-	discovery "github.com/libp2p/go-libp2p-discovery"
+	core "github.com/libp2p/go-libp2p/core"
+	"github.com/libp2p/go-libp2p/core/discovery"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 )
@@ -49,7 +50,7 @@ func withAdvertiseInterval(t time.Duration) peerManagerOpt {
 }
 
 type peerManager struct {
-	routing  *discovery.RoutingDiscovery
+	routing  *routing.RoutingDiscovery
 	host     core.Host
 	ns       string
 	maxPeers int // unlimited peers when maxPeers = 0
@@ -66,7 +67,7 @@ type peerManager struct {
 	once sync.Once
 }
 
-func newPeerManager(host core.Host, routing *discovery.RoutingDiscovery, ns string, opts ...peerManagerOpt) *peerManager {
+func newPeerManager(host core.Host, routing *routing.RoutingDiscovery, ns string, opts ...peerManagerOpt) *peerManager {
 	rand.Seed(time.Now().UnixNano())
 	pm := &peerManager{
 		host:              host,
@@ -245,7 +246,7 @@ func (pm *peerManager) ConnectedPeers() []peer.AddrInfo {
 	connSet := make(map[string]bool, len(conns))
 	for _, conn := range conns {
 		remoteID := conn.RemotePeer()
-		if connSet[remoteID.Pretty()] {
+		if connSet[remoteID.String()] {
 			continue
 		}
 		if pm.blocked(remoteID) {
@@ -258,7 +259,7 @@ func (pm *peerManager) ConnectedPeers() []peer.AddrInfo {
 			ID:    remoteID,
 			Addrs: []multiaddr.Multiaddr{conn.RemoteMultiaddr()},
 		})
-		connSet[remoteID.Pretty()] = true
+		connSet[remoteID.String()] = true
 	}
 	return ret
 }
