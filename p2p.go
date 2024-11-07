@@ -451,8 +451,9 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 		return nil
 	}
 	h.host.SetStreamHandler(protocol.ID(topic), func(stream core.Stream) {
+		conn := stream.Conn()
 		if h.cfg.EnableRateLimit && !h.unicastLimiter.Allow() {
-			Logger().Warn("Drop unicast sream due to high traffic volume.")
+			Logger().Warn("Drop unicast stream due to high traffic volume.", zap.String("id", conn.RemotePeer().String()))
 			return
 		}
 		/*
@@ -473,7 +474,6 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 			return
 		}
 
-		conn := stream.Conn()
 		RemoteAddr := peer.AddrInfo{
 			ID:    conn.RemotePeer(),
 			Addrs: []multiaddr.Multiaddr{conn.RemoteMultiaddr()},
@@ -528,7 +528,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 				}
 				if !allowed {
 					h.blacklist.Add(src)
-					Logger().Warn("Blacklist a peer", zap.Any("id", src))
+					Logger().Warn("Blacklist a peer", zap.String("id", src.String()))
 					continue
 				}
 				h.blacklist.Remove(src)
