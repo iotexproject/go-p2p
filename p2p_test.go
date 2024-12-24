@@ -526,6 +526,111 @@ func TestStream(t *testing.T) {
 	}
 }
 
+func TestConnectedPeersByTopic(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+
+	var err error
+	n := 5
+	hosts := make([]*Host, n)
+	for i := range hosts {
+		hosts[i], err = NewHost(ctx, Port(3000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
+		require.NoError(err)
+	}
+	for i := 1; i < n; i++ {
+		require.NoError(hosts[i].Connect(ctx, hosts[0].Info()))
+		hosts[i].JoinOverlay()
+	}
+	callback := func(ctx context.Context, data []byte) error {
+		return nil
+	}
+	require.NoError(hosts[1].AddBroadcastPubSub(ctx, "0", callback))
+	require.NoError(hosts[2].AddBroadcastPubSub(ctx, "1", callback))
+	require.NoError(hosts[3].AddBroadcastPubSub(ctx, "1", callback))
+	require.NoError(hosts[4].AddBroadcastPubSub(ctx, "1", callback))
+
+	time.Sleep(200 * time.Millisecond)
+	peers := hosts[1].ConnectedPeersByTopic("0")
+	require.Len(peers, 0)
+	peers = hosts[1].ConnectedPeersByTopic("1")
+	require.Len(peers, 3)
+	peers = hosts[2].ConnectedPeersByTopic("0")
+	require.Len(peers, 1)
+	peers = hosts[2].ConnectedPeersByTopic("1")
+	require.Len(peers, 2)
+}
+
+func TestBroadcastMultipleTopic(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+
+	var err error
+	n := 5
+	hosts := make([]*Host, n)
+	for i := range hosts {
+		hosts[i], err = NewHost(ctx, Port(3000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
+		require.NoError(err)
+	}
+	for i := 1; i < n; i++ {
+		require.NoError(hosts[i].Connect(ctx, hosts[0].Info()))
+		hosts[i].JoinOverlay()
+	}
+	count := map[int]int{}
+	mutex := sync.Mutex{}
+	resetCount := func() {
+		for i := range count {
+			count[i] = 0
+		}
+	}
+	callback := func(i int) HandleBroadcast {
+		return func(ctx context.Context, data []byte) error {
+			mutex.Lock()
+			defer mutex.Unlock()
+			count[i]++
+			return nil
+		}
+	}
+	require.NoError(hosts[1].AddBroadcastPubSub(ctx, "consensus", callback(1)))
+	require.NoError(hosts[1].AddBroadcastPubSub(ctx, "block", callback(1)))
+	require.NoError(hosts[2].AddBroadcastPubSub(ctx, "block", callback(2)))
+	require.NoError(hosts[2].AddBroadcastPubSub(ctx, "action", callback(2)))
+	require.NoError(hosts[3].AddBroadcastPubSub(ctx, "block", callback(3)))
+	require.NoError(hosts[3].AddBroadcastPubSub(ctx, "action", callback(3)))
+
+	time.Sleep(200 * time.Millisecond)
+
+	t.Run("broadcastSubscribedTopic", func(t *testing.T) {
+		resetCount()
+		require.NoError(hosts[3].Broadcast(ctx, "action", []byte("")))
+		require.NoError(waitUntil(100*time.Millisecond, time.Second, func() bool {
+			mutex.Lock()
+			defer mutex.Unlock()
+			return 1 == count[2] && 0 == count[1]
+		}))
+		resetCount()
+		require.NoError(hosts[3].Broadcast(ctx, "block", []byte("")))
+		require.NoError(waitUntil(100*time.Millisecond, time.Second, func() bool {
+			mutex.Lock()
+			defer mutex.Unlock()
+			return 1 == count[2] && 1 == count[1]
+		}))
+	})
+	t.Run("broadcastUnsubscribedTopic", func(t *testing.T) {
+		resetCount()
+		require.NoError(hosts[3].Broadcast(ctx, "consensus", []byte("")))
+		require.NoError(waitUntil(100*time.Millisecond, time.Second, func() bool {
+			mutex.Lock()
+			defer mutex.Unlock()
+			return 0 == count[2] && 1 == count[1]
+		}))
+	})
+	t.Run("broadcastUnsubscribedTopicWithNoPeers", func(t *testing.T) {
+		resetCount()
+		err := hosts[3].Broadcast(ctx, "unknown", []byte(""))
+		require.True(errors.Is(err, ErrNoConnectedPeers))
+	})
+}
+
 func waitUntil(interval time.Duration, timeout time.Duration, cond func() bool) error {
 	ticker := time.NewTicker(interval)
 	timer := time.NewTimer(timeout)

@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -117,6 +118,9 @@ var (
 		PeerAvg:            300,
 		PeerBurst:          500,
 	}
+
+	// ErrNoConnectedPeers is a broadcast error when have no peers
+	ErrNoConnectedPeers = fmt.Errorf("no connected peers")
 )
 
 // Option defines the option function to modify the config for a host
@@ -263,18 +267,23 @@ func WithMaxMessageSize(size int) Option {
 type Host struct {
 	host           core.Host
 	cfg            Config
-	topics         map[string]bool
+	topics         map[string]bool // used for unicast
 	kad            *dht.IpfsDHT
 	kadKey         cid.Cid
-	pubsub         *pubsub.PubSub
-	pubs           map[string]*pubsub.Topic
-	blacklist      *LRUBlacklist
-	subs           map[string]*pubsub.Subscription
+	pubsubManager  *pubsubManager // used for broadcast
+	blacklist      *LRUBlacklist  // blacklist for broadcast
 	close          chan interface{}
 	ctx            context.Context
 	peersLimiters  *lru.Cache
 	unicastLimiter *rate.Limiter
-	peerManager    *peerManager
+	peerManager    *peerManager // peers for p2p connections
+}
+
+type pubsubManager struct {
+	pubsub *pubsub.PubSub
+	pubs   map[string]*pubsub.Topic
+	subs   map[string]*pubsub.Subscription
+	mutex  sync.RWMutex
 }
 
 // NewHost constructs a host struct
@@ -402,15 +411,17 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		return nil, err
 	}
 	myHost := Host{
-		host:           host,
-		cfg:            cfg,
-		topics:         make(map[string]bool),
-		kad:            kad,
-		kadKey:         cid,
-		pubsub:         ps,
-		pubs:           make(map[string]*pubsub.Topic),
+		host:   host,
+		cfg:    cfg,
+		topics: make(map[string]bool),
+		kad:    kad,
+		kadKey: cid,
+		pubsubManager: &pubsubManager{
+			pubsub: ps,
+			pubs:   make(map[string]*pubsub.Topic),
+			subs:   make(map[string]*pubsub.Subscription),
+		},
 		blacklist:      blacklist,
-		subs:           make(map[string]*pubsub.Subscription),
 		close:          make(chan interface{}),
 		ctx:            ctx,
 		peersLimiters:  limiters,
@@ -494,19 +505,18 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 // AddBroadcastPubSub adds a broadcast topic that the host will pay attention to. This need to be called before using
 // Connect/JoinOverlay. Otherwise, pubsub may not be aware of the existing overlay topology
 func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback HandleBroadcast) error {
-	if _, ok := h.pubs[topic]; ok {
+	var err error
+	if _, ok := h.pubsubManager.getSub(topic); ok {
 		return nil
 	}
-	top, err := h.pubsub.Join(topic)
+	pub, err := h.pubsubManager.getOrAddPub(topic)
 	if err != nil {
 		return err
 	}
-	sub, err := top.Subscribe()
+	sub, err := h.pubsubManager.addSub(pub)
 	if err != nil {
 		return err
 	}
-	h.pubs[topic] = top
-	h.subs[topic] = sub
 	go func() {
 		for {
 			select {
@@ -584,10 +594,20 @@ func (h *Host) Connect(ctx context.Context, target core.PeerAddrInfo) error {
 }
 
 // Broadcast sends a message to the hosts who subscribe the topic
+// it returns ErrNoConnectedPeers if no connected peers who subscribe the topic when send a unsubscribed topic
 func (h *Host) Broadcast(ctx context.Context, topic string, data []byte) error {
-	pub, ok := h.pubs[topic]
-	if !ok {
-		return nil
+	var (
+		pub *pubsub.Topic
+		err error
+	)
+	pub, err = h.pubsubManager.getOrAddPub(topic)
+	if err != nil {
+		return err
+	}
+	// publishing unsubscribed topic will fail when no connected peers, it should return error
+	_, subscribed := h.pubsubManager.getSub(topic)
+	if !subscribed && len(pub.ListPeers()) == 0 {
+		return ErrNoConnectedPeers
 	}
 	return pub.Publish(ctx, data)
 }
@@ -685,9 +705,27 @@ func (h *Host) ConnectedPeers() []core.PeerAddrInfo {
 	return h.peerManager.ConnectedPeers()
 }
 
+// ConnectedPeersByTopic returns the connected peers' addrinfo that have subscribed the topic
+func (h *Host) ConnectedPeersByTopic(topic string) []core.PeerAddrInfo {
+	peerIDs := h.pubsubManager.listPeers(topic)
+	peers := make([]core.PeerAddrInfo, 0, len(peerIDs))
+	peerMap := make(map[peer.ID]bool)
+	for _, peerID := range peerIDs {
+		peerMap[peerID] = true
+	}
+
+	for _, p := range h.peerManager.ConnectedPeers() {
+		if peerMap[p.ID] {
+			peers = append(peers, p)
+		}
+	}
+	return peers
+}
+
 // Close closes the host
 func (h *Host) Close() error {
-	for _, sub := range h.subs {
+	close(h.close)
+	for _, sub := range h.pubsubManager.subs {
 		sub.Cancel()
 	}
 	if err := h.kad.Close(); err != nil {
@@ -696,7 +734,6 @@ func (h *Host) Close() error {
 	if err := h.host.Close(); err != nil {
 		return err
 	}
-	close(h.close)
 	return nil
 }
 
@@ -716,6 +753,66 @@ func (h *Host) allowSource(src core.PeerID) (bool, error) {
 		h.peersLimiters.Add(src, limiter)
 	}
 	return limiter.Allow(), nil
+}
+
+func (h *pubsubManager) listPeers(topic string) []peer.ID {
+	return h.pubsub.ListPeers(topic)
+}
+
+func (h *pubsubManager) getOrAddPub(topic string) (*pubsub.Topic, error) {
+	pub, ok := h.getPub(topic)
+	if ok {
+		return pub, nil
+	}
+	return h.addPub(topic)
+}
+
+func (h *pubsubManager) getPub(topic string) (pub *pubsub.Topic, ok bool) {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
+	pub, ok = h.pubs[topic]
+	return
+}
+
+func (h *pubsubManager) addPub(topic string) (*pubsub.Topic, error) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	pub, ok := h.pubs[topic]
+	if ok {
+		return pub, nil
+	}
+	pub, err := h.pubsub.Join(topic)
+	if err != nil {
+		return nil, err
+	}
+	h.pubs[topic] = pub
+	return pub, nil
+}
+
+func (h *pubsubManager) getSub(topic string) (sub *pubsub.Subscription, ok bool) {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
+	sub, ok = h.subs[topic]
+	return
+}
+
+func (h *pubsubManager) addSub(pub *pubsub.Topic) (*pubsub.Subscription, error) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	sub, ok := h.subs[pub.String()]
+	if ok {
+		return sub, nil
+	}
+	sub, err := pub.Subscribe()
+	if err != nil {
+		return nil, err
+	}
+	h.subs[pub.String()] = sub
+	return sub, nil
 }
 
 // generateKeyPair generates the public key and private key by network address

@@ -16,7 +16,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v2
       with:
+<<<<<<< HEAD
+        go-version: 1.18.5
+=======
         go-version: 1.21.4
+>>>>>>> upstream/master
 
     - name: Build
       run: go build -v ./...
