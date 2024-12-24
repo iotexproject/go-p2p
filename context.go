@@ -3,8 +3,8 @@ package p2p
 import (
 	"context"
 
-	"github.com/libp2p/go-libp2p-core"
-	"github.com/libp2p/go-libp2p-pubsub"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core"
 )
 
 type broadcastCtxKey struct{}

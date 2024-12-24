@@ -2,7 +2,7 @@ package p2p
 
 import (
 	lru "github.com/hashicorp/golang-lru"
-	core "github.com/libp2p/go-libp2p-core"
+	"github.com/libp2p/go-libp2p/core"
 )
 
 // LRUBlacklist is a blacklist implementation using an LRU cache
