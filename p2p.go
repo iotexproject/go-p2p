@@ -277,6 +277,30 @@ type Host struct {
 	peerManager    *peerManager
 }
 
+var (
+	_count = uint64(0)
+)
+
+func p2pMessageInspector(h *Host) func(peerID peer.ID, msg *pubsub.RPC) error {
+	return func(peerID peer.ID, msg *pubsub.RPC) error {
+		allowed, err := h.allowSource(peerID)
+		if err != nil {
+			Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
+			return err
+		}
+		if !allowed {
+			Logger().Debug("message from p2p peer hit rate limit", zap.Any("peer id", peerID))
+			_count = (_count + 1) % 1500
+			if _count == 0 {
+				Logger().Warn("message from p2p peer hit rate limit", zap.Any("peer id", peerID))
+			}
+			return errors.New("drop message")
+		}
+
+		return nil
+	}
+}
+
 // NewHost constructs a host struct
 func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	cfg := DefaultConfig
@@ -397,17 +421,12 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist), pubsub.WithMaxMessageSize(cfg.MaxMessageSize))
-	if err != nil {
-		return nil, err
-	}
 	myHost := Host{
 		host:           host,
 		cfg:            cfg,
 		topics:         make(map[string]bool),
 		kad:            kad,
 		kadKey:         cid,
-		pubsub:         ps,
 		pubs:           make(map[string]*pubsub.Topic),
 		blacklist:      blacklist,
 		subs:           make(map[string]*pubsub.Subscription),
@@ -418,7 +437,13 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
 	}
-
+	myHost.pubsub, err = newPubSub(ctx, host,
+		pubsub.WithBlacklist(blacklist),
+		pubsub.WithMaxMessageSize(cfg.MaxMessageSize),
+		pubsub.WithAppSpecificRpcInspector(p2pMessageInspector(&myHost)))
+	if err != nil {
+		return nil, err
+	}
 	addrs := make([]string, 0)
 	for _, ma := range myHost.Addresses() {
 		addrs = append(addrs, ma.String())
