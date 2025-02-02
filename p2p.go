@@ -278,7 +278,11 @@ type Host struct {
 }
 
 var (
-	_count = uint64(0)
+	_count    uint64
+	_blocked  uint64
+	_allowed  uint64
+	_callback uint64
+	_start    = time.Now()
 )
 
 func p2pMessageInspector(h *Host) func(peerID peer.ID, msg *pubsub.RPC) error {
@@ -294,9 +298,16 @@ func p2pMessageInspector(h *Host) func(peerID peer.ID, msg *pubsub.RPC) error {
 			if _count == 0 {
 				Logger().Warn("message from p2p peer hit rate limit", zap.Any("peer id", peerID))
 			}
+			_blocked++
+			if _blocked%500 == 0 {
+				fmt.Printf("time = %.2f, block message = %d\n", time.Since(_start).Seconds(), _blocked)
+			}
 			return errors.New("drop message")
 		}
-
+		_allowed++
+		if _allowed%500 == 0 {
+			fmt.Printf("time = %.2f, allow message = %d\n", time.Since(_start).Seconds(), _allowed)
+		}
 		return nil
 	}
 }
@@ -558,6 +569,10 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 				}
 				h.blacklist.Remove(src)
 				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
+				_callback++
+				if _callback%500 == 0 {
+					fmt.Printf("time = %.2f, upstream message = %d\n", time.Since(_start).Seconds(), _callback)
+				}
 				if err := callback(bctx, msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
 				}
