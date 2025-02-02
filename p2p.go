@@ -491,6 +491,11 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 	return nil
 }
 
+var (
+	_callback uint64
+	_start    = time.Now()
+)
+
 // AddBroadcastPubSub adds a broadcast topic that the host will pay attention to. This need to be called before using
 // Connect/JoinOverlay. Otherwise, pubsub may not be aware of the existing overlay topology
 func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback HandleBroadcast) error {
@@ -533,6 +538,10 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 				}
 				h.blacklist.Remove(src)
 				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
+				_callback++
+				if _callback%500 == 0 {
+					fmt.Printf("time = %.2f, upstream message = %d\n", time.Since(_start).Seconds(), _callback)
+				}
 				if err := callback(bctx, msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
 				}
