@@ -278,27 +278,17 @@ type Host struct {
 }
 
 var (
-	_count = uint64(0)
+	_allowed  uint64
+	_callback uint64
+	_start    = time.Now()
 )
 
-func p2pMessageInspector(h *Host) func(peerID peer.ID, msg *pubsub.RPC) error {
-	return func(peerID peer.ID, msg *pubsub.RPC) error {
-		allowed, err := h.allowSource(peerID)
-		if err != nil {
-			Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
-			return err
-		}
-		if !allowed {
-			Logger().Debug("message from p2p peer hit rate limit", zap.Any("peer id", peerID))
-			_count = (_count + 1) % 1500
-			if _count == 0 {
-				Logger().Warn("message from p2p peer hit rate limit", zap.Any("peer id", peerID))
-			}
-			return errors.New("drop message")
-		}
-
-		return nil
+func p2pMessageInspector(peerID peer.ID, msg *pubsub.RPC) error {
+	_allowed++
+	if _allowed%500 == 0 {
+		fmt.Printf("time = %.2f, allow message = %d\n", time.Since(_start).Seconds(), _allowed)
 	}
+	return nil
 }
 
 // NewHost constructs a host struct
@@ -440,7 +430,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	myHost.pubsub, err = newPubSub(ctx, host,
 		pubsub.WithBlacklist(blacklist),
 		pubsub.WithMaxMessageSize(cfg.MaxMessageSize),
-		pubsub.WithAppSpecificRpcInspector(p2pMessageInspector(&myHost)))
+		pubsub.WithAppSpecificRpcInspector(p2pMessageInspector))
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +548,10 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 				}
 				h.blacklist.Remove(src)
 				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
+				_callback++
+				if _callback%500 == 0 {
+					fmt.Printf("time = %.2f, upstream message = %d\n", time.Since(_start).Seconds(), _callback)
+				}
 				if err := callback(bctx, msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
 				}
