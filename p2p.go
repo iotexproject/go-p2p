@@ -12,6 +12,7 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
+	"github.com/iotexproject/go-pkgs/hash"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
@@ -273,6 +274,7 @@ type Host struct {
 	close          chan interface{}
 	ctx            context.Context
 	peersLimiters  *lru.Cache
+	msgDeduper     *lru.Cache
 	unicastLimiter *rate.Limiter
 	peerManager    *peerManager
 }
@@ -282,11 +284,19 @@ var (
 	_blocked  uint64
 	_allowed  uint64
 	_callback uint64
+	_dup      uint64
 	_start    = time.Now()
 )
 
 func p2pMessageInspector(h *Host) func(peerID peer.ID, msg *pubsub.RPC) error {
 	return func(peerID peer.ID, msg *pubsub.RPC) error {
+		if allowed := h.allowMessage(msg); !allowed {
+			_dup++
+			if _dup%500 == 0 {
+				fmt.Printf("time = %.2f, duplicate message = %d\n", time.Since(_start).Seconds(), _dup)
+			}
+			return errors.New("duplicate message")
+		}
 		allowed, err := h.allowSource(peerID)
 		if err != nil {
 			Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
@@ -428,6 +438,10 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	deduper, err := lru.New(cfg.RateLimiterLRUSize)
+	if err != nil {
+		return nil, err
+	}
 	blacklist, err := NewLRUBlacklist(cfg.BlockListLRUSize)
 	if err != nil {
 		return nil, err
@@ -444,6 +458,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		close:          make(chan interface{}),
 		ctx:            ctx,
 		peersLimiters:  limiters,
+		msgDeduper:     deduper,
 		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
 		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
@@ -756,6 +771,22 @@ func (h *Host) allowSource(src core.PeerID) (bool, error) {
 		h.peersLimiters.Add(src, limiter)
 	}
 	return limiter.Allow(), nil
+}
+
+func (h *Host) allowMessage(msg *pubsub.RPC) bool {
+	if !h.cfg.EnableRateLimit || len(msg.Publish) == 0 {
+		return true
+	}
+	var b []byte
+	for _, m := range msg.Publish {
+		b = append(b, []byte(m.String())...)
+	}
+	hash := hash.Hash160b(b)
+	if _, ok := h.msgDeduper.Get(hash); ok {
+		return false
+	}
+	h.msgDeduper.Add(hash, struct{}{})
+	return true
 }
 
 // generateKeyPair generates the public key and private key by network address
