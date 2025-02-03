@@ -5,7 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"os"
 	"strconv"
@@ -275,7 +275,7 @@ type Host struct {
 	ctx            context.Context
 	peersLimiters  *lru.Cache
 	msgDeduper     *lru.Cache
-	unicastLimiter *rate.Limiter
+	unicastLimiter *lru.Cache
 	peerManager    *peerManager
 }
 
@@ -434,6 +434,10 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	unicastLimiters, err := lru.New(cfg.RateLimiterLRUSize)
+	if err != nil {
+		return nil, err
+	}
 	limiters, err := lru.New(cfg.RateLimiterLRUSize)
 	if err != nil {
 		return nil, err
@@ -459,7 +463,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		ctx:            ctx,
 		peersLimiters:  limiters,
 		msgDeduper:     deduper,
-		unicastLimiter: rate.NewLimiter(rate.Limit(cfg.RateLimit.GlobalUnicastAvg), cfg.RateLimit.GlobalUnicastBurst),
+		unicastLimiter: unicastLimiters,
 		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
 	}
@@ -502,23 +506,12 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 		return nil
 	}
 	h.host.SetStreamHandler(protocol.ID(topic), func(stream core.Stream) {
-		if h.cfg.EnableRateLimit && !h.unicastLimiter.Allow() {
-			Logger().Warn("Drop unicast sream due to high traffic volume.")
+		src := stream.ID()
+		if !h.allowUnicast(src) {
+			Logger().Warn("Drop unicast stream due to high traffic volume.", zap.String("peer", src))
 			return
 		}
-		/*
-			src := stream.Conn().RemotePeer()
-			allowed, err := h.allowSource(src)
-			if err != nil {
-				Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
-				return
-			}
-			if !allowed {
-				// TODO: blacklist src for unicast too
-				return
-			}
-		*/
-		data, err := ioutil.ReadAll(stream)
+		data, err := io.ReadAll(stream)
 		if err != nil {
 			Logger().Error("Error when subscribing a unicast message.", zap.Error(err))
 			return
@@ -753,6 +746,20 @@ func (h *Host) Close() error {
 	}
 	close(h.close)
 	return nil
+}
+
+func (h *Host) allowUnicast(src string) bool {
+	if !h.cfg.EnableRateLimit {
+		return true
+	}
+	var limiter *rate.Limiter
+	if val, ok := h.unicastLimiter.Get(src); ok {
+		limiter, _ = val.(*rate.Limiter)
+	} else {
+		limiter = rate.NewLimiter(rate.Limit(h.cfg.RateLimit.GlobalUnicastAvg), h.cfg.RateLimit.GlobalUnicastBurst)
+		h.unicastLimiter.Add(src, limiter)
+	}
+	return limiter.Allow()
 }
 
 func (h *Host) allowSource(src core.PeerID) (bool, error) {
