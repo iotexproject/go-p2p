@@ -81,7 +81,7 @@ func TestUnicast(t *testing.T) {
 	for i := 0; i < n; i++ {
 		host, err := NewHost(ctx, Port(30000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
 		require.NoError(t, err)
-		require.NoError(t, host.AddUnicastPubSub("test", func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
+		require.NoError(t, host.AddUnicastPubSub(ctx, "test", func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
 			fmt.Print(string(data))
 			fmt.Printf(", received by %s\n", host.HostIdentity())
 			atomic.AddInt32(&count, 1)
@@ -140,7 +140,7 @@ func TestPeerManager(t *testing.T) {
 		}
 		host, err := NewHost(ctx, Port(30000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
 		require.NoError(err)
-		require.NoError(host.AddUnicastPubSub(topic, func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
+		require.NoError(host.AddUnicastPubSub(ctx, topic, func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
 			fmt.Print(string(data))
 			fmt.Printf(", received by %s\n", host.HostIdentity())
 			atomic.AddInt32(&count, 1)
@@ -366,13 +366,13 @@ func TestStream(t *testing.T) {
 	for i := 0; i < n; i++ {
 		host, err := NewHost(ctx, Port(30000+i), SecureIO(), MasterKey(strconv.Itoa(i)))
 		require.NoError(err)
-		require.NoError(host.AddUnicastPubSub(topic1, func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
+		require.NoError(host.AddUnicastPubSub(ctx, topic1, func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
 			mu.Lock()
 			defer mu.Unlock()
 			countMap[string(data)]++
 			return nil
 		}))
-		require.NoError(host.AddUnicastPubSub(topic2, func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
+		require.NoError(host.AddUnicastPubSub(ctx, topic2, func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
 			mu.Lock()
 			defer mu.Unlock()
 			countMap[string(data)]++

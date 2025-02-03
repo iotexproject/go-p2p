@@ -131,7 +131,7 @@ func main() {
 	if err := host.AddBroadcastPubSub(ctx, "measurement", HandleMsg); err != nil {
 		p2p.Logger().Panic("Error when adding broadcast pubsub.", zap.Error(err))
 	}
-	if err := host.AddUnicastPubSub("measurement", HandleUnicastMsg); err != nil {
+	if err := host.AddUnicastPubSub(ctx, "measurement", HandleUnicastMsg); err != nil {
 		p2p.Logger().Panic("Error when adding unicast pubsub", zap.Error(err))
 	}
 
