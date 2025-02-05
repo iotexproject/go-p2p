@@ -30,6 +30,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/core/transport"
 	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	yamux "github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	connmgr "github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
@@ -69,6 +70,8 @@ type (
 		MaxPeer                  int             `yaml:"maxPeer"`
 		MaxMessageSize           int             `yaml:"maxMessageSize"`
 		BlacklistTolerance       int             `yaml:"blacklistTolerance"`
+		MaxConn                  int             `yaml:"maxConn"`
+		MaxStreamPerPeer         int             `yaml:"maxStreamPerPeer"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -259,6 +262,18 @@ func WithMaxMessageSize(size int) Option {
 	}
 }
 
+// WithMaxConnAndStream config MaxConn and MaxStreamPerPeer option.
+func WithMaxConnAndStream(conn, stream uint32) Option {
+	return func(cfg *Config) error {
+		if conn == 0 || stream == 0 {
+			panic("conn and stream should be greater than 0")
+		}
+		cfg.MaxConn = int(conn)
+		cfg.MaxStreamPerPeer = int(stream)
+		return nil
+	}
+}
+
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
 	host           core.Host
@@ -275,6 +290,15 @@ type Host struct {
 	peersLimiters  *lru.Cache
 	unicastLimiter *rate.Limiter
 	peerManager    *peerManager
+}
+
+func p2pMessageInspector(h *Host) func(peerID peer.ID, msg *pubsub.RPC) error {
+	return func(peerID peer.ID, msg *pubsub.RPC) error {
+		if !h.allowSource(peerID) {
+			return errors.New("drop message")
+		}
+		return nil
+	}
 }
 
 // NewHost constructs a host struct
@@ -343,6 +367,33 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		libp2p.DefaultPrometheusRegisterer,
 	}
 
+	if cfg.MaxConn > 0 {
+		// Set limits for libp2p services
+		scalingLimits := rcmgr.DefaultLimits
+		libp2p.SetDefaultServiceLimits(&scalingLimits)
+		scaledDefaultLimits := scalingLimits.AutoScale()
+		rcmgrCfg := rcmgr.PartialLimitConfig{
+			System: rcmgr.ResourceLimits{
+				Conns:         rcmgr.LimitVal(2 * cfg.MaxConn),
+				ConnsInbound:  rcmgr.LimitVal(cfg.MaxConn),
+				ConnsOutbound: rcmgr.LimitVal(cfg.MaxConn),
+			},
+			PeerDefault: rcmgr.ResourceLimits{
+				Streams:         rcmgr.LimitVal(2 * cfg.MaxStreamPerPeer),
+				StreamsInbound:  rcmgr.LimitVal(cfg.MaxStreamPerPeer),
+				StreamsOutbound: rcmgr.LimitVal(cfg.MaxStreamPerPeer),
+			},
+		}
+		rm, err := rcmgr.NewResourceManager(
+			rcmgr.NewFixedLimiter(rcmgrCfg.Build(scaledDefaultLimits)),
+			rcmgr.WithMetricsDisabled(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, libp2p.ResourceManager(rm))
+	}
+
 	if !cfg.SecureIO {
 		opts = append(opts, libp2p.NoSecurity)
 	}
@@ -397,17 +448,12 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	ps, err := newPubSub(ctx, host, pubsub.WithBlacklist(blacklist), pubsub.WithMaxMessageSize(cfg.MaxMessageSize))
-	if err != nil {
-		return nil, err
-	}
 	myHost := Host{
 		host:           host,
 		cfg:            cfg,
 		topics:         make(map[string]bool),
 		kad:            kad,
 		kadKey:         cid,
-		pubsub:         ps,
 		pubs:           make(map[string]*pubsub.Topic),
 		blacklist:      blacklist,
 		subs:           make(map[string]*pubsub.Subscription),
@@ -418,7 +464,13 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
 	}
-
+	myHost.pubsub, err = newPubSub(ctx, host,
+		pubsub.WithBlacklist(blacklist),
+		pubsub.WithMaxMessageSize(cfg.MaxMessageSize),
+		pubsub.WithAppSpecificRpcInspector(p2pMessageInspector(&myHost)))
+	if err != nil {
+		return nil, err
+	}
 	addrs := make([]string, 0)
 	for _, ma := range myHost.Addresses() {
 		addrs = append(addrs, ma.String())
@@ -521,12 +573,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 					continue
 				}
 				src := msg.GetFrom()
-				allowed, err := h.allowSource(src)
-				if err != nil {
-					Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
-					continue
-				}
-				if !allowed {
+				if !h.allowSource(src) {
 					h.blacklist.Add(src)
 					Logger().Warn("Blacklist a peer", zap.Any("id", src))
 					continue
@@ -700,22 +747,18 @@ func (h *Host) Close() error {
 	return nil
 }
 
-func (h *Host) allowSource(src core.PeerID) (bool, error) {
+func (h *Host) allowSource(src core.PeerID) bool {
 	if !h.cfg.EnableRateLimit {
-		return true, nil
+		return true
 	}
 	var limiter *rate.Limiter
-	val, ok := h.peersLimiters.Get(src)
-	if ok {
-		limiter, ok = val.(*rate.Limiter)
-		if !ok {
-			return false, errors.New("error when casting to limiter struct")
-		}
+	if val, ok := h.peersLimiters.Get(src); ok {
+		limiter, _ = val.(*rate.Limiter)
 	} else {
 		limiter = rate.NewLimiter(rate.Limit(h.cfg.RateLimit.PeerAvg), h.cfg.RateLimit.PeerBurst)
 		h.peersLimiters.Add(src, limiter)
 	}
-	return limiter.Allow(), nil
+	return limiter.Allow()
 }
 
 // generateKeyPair generates the public key and private key by network address
