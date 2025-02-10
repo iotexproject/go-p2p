@@ -128,7 +128,7 @@ func main() {
 	HandleUnicastMsg := func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
 		return HandleMsg(ctx, data)
 	}
-	if err := host.AddBroadcastPubSub(ctx, "measurement", HandleMsg); err != nil {
+	if err := host.AddBroadcastPubSub(ctx, "measurement", nil, HandleMsg); err != nil {
 		p2p.Logger().Panic("Error when adding broadcast pubsub.", zap.Error(err))
 	}
 	if err := host.AddUnicastPubSub("measurement", HandleUnicastMsg); err != nil {
