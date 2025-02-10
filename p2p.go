@@ -66,9 +66,11 @@ type (
 		RateLimit                RateLimitConfig `yaml:"rateLimit"`
 		PrivateNetworkPSK        string          `yaml:"privateNetworkPSK"`
 		GroupID                  string          `yaml:"groupID"`
+		DefaultTopic             string          `yaml:"defaultTopic"`
 		MaxPeer                  int             `yaml:"maxPeer"`
 		MaxMessageSize           int             `yaml:"maxMessageSize"`
 		BlacklistTolerance       int             `yaml:"blacklistTolerance"`
+		EvmNetworkID             uint32          `yaml:"evmNetworkID"`
 	}
 
 	// RateLimitConfig all numbers are per second value.
@@ -259,6 +261,20 @@ func WithMaxMessageSize(size int) Option {
 	}
 }
 
+func WithDefaultTopic(topic string) Option {
+	return func(cfg *Config) error {
+		cfg.DefaultTopic = topic
+		return nil
+	}
+}
+
+func WithEvmNetworkID(id uint32) Option {
+	return func(cfg *Config) error {
+		cfg.EvmNetworkID = id
+		return nil
+	}
+}
+
 // Host is the main struct that represents a host that communicating with the rest of the P2P networks
 type Host struct {
 	host           core.Host
@@ -418,7 +434,10 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
 	}
-
+	validator := newFormatAndSenderValidator(myHost.cfg.EvmNetworkID, cfg.RateLimiterLRUSize, cfg.RateLimit.PeerAvg, cfg.RateLimit.PeerBurst)
+	if err := myHost.pubsub.RegisterTopicValidator(cfg.DefaultTopic, validator.validate); err != nil {
+		return nil, err
+	}
 	addrs := make([]string, 0)
 	for _, ma := range myHost.Addresses() {
 		addrs = append(addrs, ma.String())
