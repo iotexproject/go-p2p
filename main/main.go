@@ -109,7 +109,7 @@ func main() {
 	audit := make(map[string]int, 0)
 	var mutex sync.Mutex
 
-	HandleMsg := func(ctx context.Context, data []byte) error {
+	HandleMsg := func(ctx context.Context, peerID peer.ID, data []byte) error {
 		mutex.Lock()
 		defer mutex.Unlock()
 
@@ -125,10 +125,10 @@ func main() {
 		receiveCounter.WithLabelValues(id, host.HostIdentity()).Inc()
 		return nil
 	}
-	HandleUnicastMsg := func(ctx context.Context, _ peer.AddrInfo, data []byte) error {
-		return HandleMsg(ctx, data)
+	HandleUnicastMsg := func(ctx context.Context, peer peer.AddrInfo, data []byte) error {
+		return HandleMsg(ctx, peer.ID, data)
 	}
-	if err := host.AddBroadcastPubSub(ctx, "measurement", HandleMsg); err != nil {
+	if err := host.AddBroadcastPubSub(ctx, "measurement", nil, HandleMsg); err != nil {
 		p2p.Logger().Panic("Error when adding broadcast pubsub.", zap.Error(err))
 	}
 	if err := host.AddUnicastPubSub("measurement", HandleUnicastMsg); err != nil {
