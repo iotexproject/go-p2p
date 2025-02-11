@@ -356,7 +356,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		libp2p.Identity(prikey),
 		libp2p.DefaultSecurity,
 		libp2p.Transport(func(upgrader transport.Upgrader) *tcp.TcpTransport {
-			tp, err := tcp.NewTCPTransport(upgrader, &network.NullResourceManager{}, tcp.WithConnectionTimeout(cfg.ConnectTimeout))
+			tp, err := tcp.NewTCPTransport(upgrader, &network.NullResourceManager{}, nil, tcp.WithConnectionTimeout(cfg.ConnectTimeout))
 			if err != nil {
 				Logger().Panic("failed to new tcp transport", zap.Error(err))
 			}
