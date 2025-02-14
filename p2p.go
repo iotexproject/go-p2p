@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math/rand"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
+	"github.com/iotexproject/go-pkgs/hash"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
@@ -288,6 +290,7 @@ type Host struct {
 	close          chan interface{}
 	ctx            context.Context
 	peersLimiters  *lru.Cache
+	msgDeduper     *lru.Cache
 	unicastLimiter *lru.Cache
 	peerManager    *peerManager
 }
@@ -448,6 +451,10 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	deduper, err := lru.New(cfg.RateLimiterLRUSize)
+	if err != nil {
+		return nil, err
+	}
 	blacklist, err := NewLRUBlacklist(cfg.BlockListLRUSize)
 	if err != nil {
 		return nil, err
@@ -464,6 +471,7 @@ func NewHost(ctx context.Context, options ...Option) (*Host, error) {
 		close:          make(chan interface{}),
 		ctx:            ctx,
 		peersLimiters:  limiters,
+		msgDeduper:     deduper,
 		unicastLimiter: unicastLimiters,
 		peerManager: newPeerManager(host, routing.NewRoutingDiscovery(kad), cfg.GroupID,
 			withMaxPeers(cfg.MaxPeer), withBlacklistTolerance(cfg.BlacklistTolerance), withBlacklistTimeout(cfg.BlackListTimeout)),
@@ -536,6 +544,10 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 	return nil
 }
 
+var (
+	_dup int
+)
+
 // AddBroadcastPubSub adds a broadcast topic that the host will pay attention to. This need to be called before using
 // Connect/JoinOverlay. Otherwise, pubsub may not be aware of the existing overlay topology
 func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, validator interface{}, callback HandleBroadcast) error {
@@ -561,13 +573,16 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, validator i
 		for {
 			select {
 			case <-h.close:
+				h.dedupStats()
 				return
 			case <-ctx.Done():
+				h.dedupStats()
 				return
 			default:
 				msg, err := sub.Next(ctx)
 				if err != nil {
 					Logger().Error("Error when subscribing a broadcast message.", zap.Error(err))
+					h.dedupStats()
 					continue
 				}
 				src := msg.GetFrom()
@@ -577,6 +592,14 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, validator i
 					continue
 				}
 				h.blacklist.Remove(src)
+				if id, allowed := h.allowMessage(msg); !allowed {
+					_dup++
+					if _dup%1000 == 0 {
+						h := hash.Hash160b(msg.Data)
+						Logger().Info("duplicate msg", zap.Int("number", _dup), zap.String("id", id), zap.String("hash", hex.EncodeToString(h[:10])))
+					}
+					continue
+				}
 				if err := callback(ctx, msg.GetFrom(), msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
 				}
@@ -770,6 +793,37 @@ func (h *Host) allowSource(src core.PeerID) bool {
 		h.peersLimiters.Add(src, limiter)
 	}
 	return limiter.Allow()
+}
+
+func (h *Host) allowMessage(msg *pubsub.Message) (string, bool) {
+	if !h.cfg.EnableRateLimit {
+		return "disabled", true
+	}
+	id := string(msg.From) + string(msg.Seqno)
+	hash := hash.Hash160b(msg.Data)
+	val, ok := h.msgDeduper.Get(hash)
+	if !ok {
+		h.msgDeduper.Add(hash, 1)
+		return id, true
+	}
+	h.msgDeduper.Add(hash, val.(int)+1)
+	return id, false
+}
+
+func (h *Host) dedupStats() {
+	var (
+		count, total, max int
+	)
+	for _, k := range h.msgDeduper.Keys() {
+		val, _ := h.msgDeduper.Get(k)
+		v := val.(int)
+		count++
+		total += v
+		if v > max {
+			max = v
+		}
+	}
+	println("count =", count, "total =", total, "max =", max)
 }
 
 // generateKeyPair generates the public key and private key by network address
