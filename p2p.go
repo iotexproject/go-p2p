@@ -13,12 +13,14 @@ import (
 
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/iotexproject/go-pkgs/hash"
+	"github.com/iotexproject/iotex-proto/golang/iotexrpc"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -290,13 +292,6 @@ var (
 
 func p2pMessageInspector(h *Host) func(peerID peer.ID, msg *pubsub.RPC) error {
 	return func(peerID peer.ID, msg *pubsub.RPC) error {
-		if allowed := h.allowMessage(msg); !allowed {
-			_dup++
-			if _dup%500 == 0 {
-				fmt.Printf("time = %.2f, duplicate message = %d\n", time.Since(_start).Seconds(), _dup)
-			}
-			return errors.New("duplicate message")
-		}
 		allowed, err := h.allowSource(peerID)
 		if err != nil {
 			Logger().Error("Error when checking if the source is allowed.", zap.Error(err))
@@ -580,6 +575,19 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 				}
 				h.blacklist.Remove(src)
 				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
+				if id, allowed := h.allowMessage(msg); !allowed {
+					var broadcast iotexrpc.BroadcastMsg
+					if err := proto.Unmarshal(msg.Data, &broadcast); err != nil {
+						fmt.Printf("failed to decode message: %s\n", err.Error())
+						continue
+					}
+					fmt.Printf("time = %.2f, duplicate message = %s, hash = %x, type = %d\n", time.Since(_start).Seconds(), id, hash.Hash160b(msg.Data), broadcast.MsgType)
+					_dup++
+					if _dup%500 == 0 {
+						fmt.Printf("time = %.2f, duplicate message = %d\n", time.Since(_start).Seconds(), _dup)
+					}
+					continue
+				}
 				_callback++
 				if _callback%500 == 0 {
 					fmt.Printf("time = %.2f, upstream message = %d\n", time.Since(_start).Seconds(), _callback)
@@ -783,22 +791,19 @@ func (h *Host) allowSource(src core.PeerID) (bool, error) {
 	return limiter.Allow(), nil
 }
 
-func (h *Host) allowMessage(msg *pubsub.RPC) bool {
-	if !h.cfg.EnableRateLimit || len(msg.Publish) == 0 {
-		return true
+func (h *Host) allowMessage(msg *pubsub.Message) (string, bool) {
+	if !h.cfg.EnableRateLimit {
+		return "disabled", true
 	}
-	var b []byte
-	for _, m := range msg.Publish {
-		b = append(b, []byte(m.String())...)
-	}
-	hash := hash.Hash160b(b)
+	id := string(msg.From) + string(msg.Seqno)
+	hash := hash.Hash160b(msg.Data)
 	val, ok := h.msgDeduper.Get(hash)
 	if !ok {
 		h.msgDeduper.Add(hash, 1)
-		return true
+		return id, true
 	}
 	h.msgDeduper.Add(hash, val.(int)+1)
-	return val.(int) <= 2
+	return id, false
 }
 
 func (h *Host) dedupStats() {
