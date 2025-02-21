@@ -143,8 +143,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.5 h1:wW7h1TG88eUIJ2i69gaE3uNVtEPIagzhGvH
 github.com/hashicorp/golang-lru/v2 v2.0.5/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/huin/goupnp v1.3.0 h1:UvLUlWDNpoUdYzb2TCn+MuTWtcjXKSza2n6CBdQ0xXc=
 github.com/huin/goupnp v1.3.0/go.mod h1:gnGPsThkYa7bFi/KWmEysQRf48l2dvR5bxr2OFckNX8=
-github.com/iotexproject/go-pkgs v0.1.15-0.20250203050652-f6f37ab0c630 h1:DyRguJDgv34i0XIVTEWlJ5SvZRWpLNLKbe3/+tBP/xM=
-github.com/iotexproject/go-pkgs v0.1.15-0.20250203050652-f6f37ab0c630/go.mod h1:T9UX5gAis+Z5j7ZgGwqDbBH+eXWnZgt3nenW4+w7pa8=
+github.com/iotexproject/go-pkgs v0.1.15 h1:+Mm+avyOhKdSUgnfOOYBfILA8uBgk3pDzmfuAcLMFNo=
+github.com/iotexproject/go-pkgs v0.1.15/go.mod h1:T9UX5gAis+Z5j7ZgGwqDbBH+eXWnZgt3nenW4+w7pa8=
 github.com/ipfs/boxo v0.10.0 h1:tdDAxq8jrsbRkYoF+5Rcqyeb91hgWe2hp7iLu7ORZLY=
 github.com/ipfs/boxo v0.10.0/go.mod h1:Fg+BnfxZ0RPzR0nOodzdIq3A7KgoWAOWsEIImrIQdBM=
 github.com/ipfs/go-cid v0.4.1 h1:A/T3qGvxi4kpKWWcPC/PgbvDA2bjVLO7n4UeVwnbs/s=

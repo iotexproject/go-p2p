@@ -4,7 +4,7 @@ go 1.21.11
 
 require (
 	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d
-	github.com/iotexproject/go-pkgs v0.1.15-0.20250203050652-f6f37ab0c630
+	github.com/iotexproject/go-pkgs v0.1.15
 	github.com/ipfs/go-cid v0.4.1
 	github.com/libp2p/go-libp2p v0.32.2
 	github.com/libp2p/go-libp2p-kad-dht v0.25.2
