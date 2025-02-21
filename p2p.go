@@ -37,7 +37,7 @@ import (
 
 type (
 	// HandleBroadcast defines the callback function triggered when a broadcast message reaches a host
-	HandleBroadcast func(ctx context.Context, data []byte) error
+	HandleBroadcast func(ctx context.Context, peerID peer.ID, data []byte) error
 
 	// HandleUnicast defines the callback function triggered when a unicast message reaches a host
 	HandleUnicast func(context.Context, peer.AddrInfo, []byte) error
@@ -493,13 +493,18 @@ func (h *Host) AddUnicastPubSub(topic string, callback HandleUnicast) error {
 
 // AddBroadcastPubSub adds a broadcast topic that the host will pay attention to. This need to be called before using
 // Connect/JoinOverlay. Otherwise, pubsub may not be aware of the existing overlay topology
-func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback HandleBroadcast) error {
+func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, validator interface{}, callback HandleBroadcast) error {
 	if _, ok := h.pubs[topic]; ok {
 		return nil
 	}
 	top, err := h.pubsub.Join(topic)
 	if err != nil {
 		return err
+	}
+	if validator != nil {
+		if err := h.pubsub.RegisterTopicValidator(topic, validator); err != nil {
+			return err
+		}
 	}
 	sub, err := top.Subscribe()
 	if err != nil {
@@ -532,8 +537,7 @@ func (h *Host) AddBroadcastPubSub(ctx context.Context, topic string, callback Ha
 					continue
 				}
 				h.blacklist.Remove(src)
-				bctx := context.WithValue(ctx, broadcastCtxKey{}, msg)
-				if err := callback(bctx, msg.Data); err != nil {
+				if err := callback(ctx, msg.GetFrom(), msg.Data); err != nil {
 					Logger().Error("Error when processing a broadcast message.", zap.Error(err))
 				}
 			}

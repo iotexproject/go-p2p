@@ -30,7 +30,7 @@ func TestBroadcast(t *testing.T) {
 			opts = append(opts, options...)
 			host, err := NewHost(ctx, opts...)
 			require.NoError(t, err)
-			require.NoError(t, host.AddBroadcastPubSub(ctx, "test", func(ctx context.Context, data []byte) error {
+			require.NoError(t, host.AddBroadcastPubSub(ctx, "test", nil, func(ctx context.Context, peer peer.ID, data []byte) error {
 				fmt.Print(string(data))
 				fmt.Printf(", received by %s\n", host.HostIdentity())
 				return nil
