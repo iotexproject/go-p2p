@@ -50,11 +50,11 @@ func withAdvertiseInterval(t time.Duration) peerManagerOpt {
 }
 
 type peerManager struct {
-	routing  *routing.RoutingDiscovery
-	host     core.Host
-	ns       string
-	maxPeers int // unlimited peers when maxPeers = 0
-
+	routing        *routing.RoutingDiscovery
+	host           core.Host
+	ns             string
+	maxPeers       int // unlimited peers when maxPeers = 0
+	mutex          sync.RWMutex
 	bootstrap      map[core.PeerID]bool
 	blacklist      *ttl.Cache
 	advertiseQueue chan string
@@ -133,6 +133,8 @@ func (pm *peerManager) Advertise() error {
 }
 
 func (pm *peerManager) AddBootstrap(ids ...core.PeerID) {
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
 	for _, id := range ids {
 		pm.bootstrap[id] = true
 	}
@@ -193,6 +195,8 @@ func (pm *peerManager) findPeers(ctx context.Context, limit int) (bool, error) {
 }
 
 func (pm *peerManager) hasPeers() bool {
+	pm.mutex.RLock()
+	defer pm.mutex.RUnlock()
 	for _, conn := range pm.host.Network().Conns() {
 		if !pm.bootstrap[conn.RemotePeer()] {
 			return true
@@ -244,6 +248,8 @@ func (pm *peerManager) ConnectedPeers() []peer.AddrInfo {
 	// There might be multiple connections for one peerID,
 	// but only a random one is added into the result
 	connSet := make(map[string]bool, len(conns))
+	pm.mutex.RLock()
+	defer pm.mutex.RUnlock()
 	for _, conn := range conns {
 		remoteID := conn.RemotePeer()
 		if connSet[remoteID.String()] {
